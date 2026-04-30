@@ -1,0 +1,32 @@
+# KITTI DataModule configuration
+
+_target_: unical.data.datamodule.KittiDataModule
+
+data_dir: ${data_dir}   # resolved from top-level train.yaml
+
+batch_size:  8
+num_workers: 4       # set to 0 if you get DataLoader worker errors on macOS
+pin_memory:  false   # MPS does not support pinned memory
+
+# Splits — imported from experiment config
+splits: ${experiment.splits}
+
+# Decalibrator
+decalibrator:
+  _target_: unical.data.decalibrator.ErrorGenerator
+  r_range: 1.0      # degrees
+  t_range: 10.0     # centimetres
+
+# Preprocessor
+preprocessor:
+  _target_: unical.data.preprocessor.DataPreprocessor
+  cfg:
+    _target_: unical.data.preprocessor.PreprocessorConfig
+    width:         512
+    height:        512
+    grayscale:     false
+    add_intensity: false
+    min_depth:     2.0
+    max_depth:     80.0
+    augmentation:
+      _target_: unical.utils.augmentation.AugmentationConfig

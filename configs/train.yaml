@@ -1,0 +1,23 @@
+# Main training configuration
+# Run with: python train.py
+
+defaults:
+  - data: kitti
+  - model: unical
+  - experiment: default
+  - _self_
+
+# ── Paths ────────────────────────────────────────────────────────────────────
+data_dir:  ???          # set via CLI: data_dir=/path/to/kitti_raw
+log_dir:   logs/
+
+# ── Trainer ─────────────────────────────────────────────────────────────────
+trainer:
+  max_epochs:      500
+  accelerator:     auto    # auto-detects MPS on Apple Silicon, CUDA on Linux/Windows, CPU otherwise
+  devices:         1
+  precision:       "32-true"
+  log_every_n_steps: 20
+  val_check_interval: 1.0
+
+seed: 42
