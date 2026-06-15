@@ -6,9 +6,8 @@ to the LiDAR projection.  The model must predict that decalibration error.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, NamedTuple, Optional, Tuple
+from typing import Any, NamedTuple
 
 import numpy as np
 import torch
@@ -18,7 +17,6 @@ from unical.data.decalibrator import ErrorGenerator
 from unical.data.preprocessor import DataPreprocessor
 from unical.utils.geometry import load_image_rgb
 from unical.utils.transform import Transform
-
 
 # ---------------------------------------------------------------------------
 # Batch type
@@ -30,22 +28,22 @@ class Batch(NamedTuple):
 
     img:        (B, C_img, H, W)   — normalised camera image
     lidar_map:  (B, C_lid, H, W)   — normalised sparse depth map
-    target_reg: tuple[(B, 3), (B, 3)] — (translation, euler) decal target
+    target_reg: tuple[(B, 3), (B, 3, 3)] — (translation, rotation_matrix) decal target
     pcl:        (B, N, 4)          — raw padded LiDAR scan (for spatial loss)
     metadata:   list of per-sample dicts
     """
     img:        torch.Tensor
     lidar_map:  torch.Tensor
-    target_reg: Tuple[torch.Tensor, torch.Tensor]
+    target_reg: tuple[torch.Tensor, torch.Tensor]
     pcl:        torch.Tensor
-    metadata:   List[Dict[str, Any]]
+    metadata:   list[dict[str, Any]]
 
 
 # ---------------------------------------------------------------------------
 # Dataset
 # ---------------------------------------------------------------------------
 
-Split = List[Tuple[str, List[int]]]   # [("2011_09_26", [1, 2, ...]), ...]
+Split = list[tuple[str, list[int]]]   # [("2011_09_26", [1, 2, ...]), ...]
 
 
 class KittiDataset(Dataset):
@@ -66,13 +64,17 @@ class KittiDataset(Dataset):
         split: Split,
         preprocessor: DataPreprocessor,
         decalibrator: ErrorGenerator,
+        deterministic: bool = False,
+        seed: int = 0,
     ) -> None:
         self.data_dir     = Path(data_dir)
         self.preprocessor = preprocessor
         self.decalibrator = decalibrator
+        self.deterministic = deterministic
+        self.seed = seed
 
-        self._samples: List[Tuple[str, int, int]] = []  # (date, drive, frame_id)
-        self._date_meta: Dict[str, Dict] = {}
+        self._samples: list[tuple[str, int, int]] = []  # (date, drive, frame_id)
+        self._date_meta: dict[str, dict] = {}
 
         self._parse(split)
 
@@ -95,7 +97,7 @@ class KittiDataset(Dataset):
                         self._samples.append((date, drive, fid))
 
     @staticmethod
-    def _read_calibration(date_dir: Path) -> Dict:
+    def _read_calibration(date_dir: Path) -> dict:
         """Parse KITTI raw calibration files for a date folder."""
         # camera intrinsics
         K = P = None
@@ -124,7 +126,7 @@ class KittiDataset(Dataset):
     def __len__(self) -> int:
         return len(self._samples)
 
-    def __getitem__(self, idx: int) -> Dict:
+    def __getitem__(self, idx: int) -> dict:
         date, drive, fid = self._samples[idx]
         meta = self._date_meta[date]
         K    = meta["K"]
@@ -142,8 +144,13 @@ class KittiDataset(Dataset):
         img      = load_image_rgb(str(img_path))
         raw_pcl  = np.fromfile(str(lidar_path), dtype=np.float32).reshape(-1, 4)
 
-        # Sample a random decalibration error
-        T_decal   = self.decalibrator()        # Transform
+        # Sample a decalibration error. For val/test (deterministic=True) seed it
+        # per sample index so the decalibration — and thus the metric — is stable.
+        if self.deterministic:
+            gen = torch.Generator().manual_seed(self.seed * 1_000_003 + idx)
+            T_decal = self.decalibrator(generator=gen)
+        else:
+            T_decal = self.decalibrator()       # Transform
         T_init    = T_decal @ T_gt             # decalibrated extrinsic
 
         # Preprocess image + project lidar with decalibrated extrinsic
@@ -151,14 +158,16 @@ class KittiDataset(Dataset):
             img.copy(), raw_pcl.copy(), T_init.matrix, K.copy()
         )
 
-        # Regression target: the decalibration we want to predict
-        t_target, r_target = T_decal.to_euler_components()  # numpy (3,)
+        # Regression target: the decalibration we want to predict, as a translation
+        # vector + rotation matrix (matrix target avoids Euler-convention ambiguity).
+        t_target = T_decal.translation                 # numpy (3,)
+        R_target = T_decal.rotation_matrix             # numpy (3, 3)
 
         return {
             "img":       torch.from_numpy(img_pp).permute(2, 0, 1),    # (C, H, W)
             "lidar_map": torch.from_numpy(lidar_map).permute(2, 0, 1), # (C, H, W)
             "trans":     torch.from_numpy(t_target),                    # (3,)
-            "rot":       torch.from_numpy(r_target),                    # (3,)
+            "rot_mat":   torch.from_numpy(R_target),                    # (3, 3)
             "pcl":       torch.from_numpy(raw_pcl),                     # (N, 4)
             "metadata": {
                 "T_gt":    T_gt,      # Transform (numpy) — ground truth
@@ -174,11 +183,11 @@ class KittiDataset(Dataset):
     # ------------------------------------------------------------------
 
     @staticmethod
-    def collate(samples: List[Dict]) -> Batch:
+    def collate(samples: list[dict]) -> Batch:
         img       = torch.stack([s["img"]       for s in samples])
         lidar_map = torch.stack([s["lidar_map"] for s in samples])
         trans     = torch.stack([s["trans"]     for s in samples])
-        rot       = torch.stack([s["rot"]       for s in samples])
+        rot_mat   = torch.stack([s["rot_mat"]   for s in samples])
         # Pad point clouds to the same length (pad value = 0)
         pcl = torch.nn.utils.rnn.pad_sequence(
             [s["pcl"] for s in samples], batch_first=True
@@ -187,7 +196,7 @@ class KittiDataset(Dataset):
         return Batch(
             img=img,
             lidar_map=lidar_map,
-            target_reg=(trans, rot),
+            target_reg=(trans, rot_mat),
             pcl=pcl,
             metadata=metadata,
         )

@@ -3,7 +3,7 @@ Lightning DataModule wrapping the KITTI dataset.
 """
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 import pytorch_lightning as L
 from torch.utils.data import DataLoader
@@ -44,13 +44,16 @@ class KittiDataModule(L.LightningDataModule):
 
     # ------------------------------------------------------------------
 
-    def setup(self, stage: Optional[str] = None) -> None:
+    def setup(self, stage: str | None = None) -> None:
         def _make(key: str) -> KittiDataset:
+            # val/test use deterministic (seeded-per-index) decalibrations so their
+            # metrics are stable and reproducible across epochs and runs.
             return KittiDataset(
-                data_dir     = self.hparams.data_dir,
-                split        = self._splits[key],
-                preprocessor = self._preprocessor,
-                decalibrator = self._decalibrator,
+                data_dir      = self.hparams.data_dir,
+                split         = self._splits[key],
+                preprocessor  = self._preprocessor,
+                decalibrator  = self._decalibrator,
+                deterministic = key != "train",
             )
         self.train_ds = _make("train")
         self.val_ds   = _make("val")
