@@ -31,7 +31,12 @@ echo "==> [1/5] system dependencies"
 if command -v apt-get >/dev/null 2>&1; then
   export DEBIAN_FRONTEND=noninteractive
   apt-get update -y
-  apt-get install -y --no-install-recommends git curl wget unzip ca-certificates
+  # git/curl/wget/unzip for setup + dataset; the lib* packages are the runtime
+  # shared libraries opencv-python needs on headless servers (libGL, libxcb, …)
+  # without them `import cv2` fails with e.g. "libxcb.so.1: cannot open ...".
+  apt-get install -y --no-install-recommends \
+    git curl wget unzip ca-certificates \
+    libgl1 libglib2.0-0 libxcb1 libsm6 libxext6 libxrender1
 fi
 
 echo "==> [2/5] uv"
