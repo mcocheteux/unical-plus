@@ -70,10 +70,12 @@ class UniCal(L.LightningModule):
         losses = self.loss_fn(pred, batch)           # dict with "loss", sub-keys
 
         B = pred[0].shape[0]
-        pred_t = pred[0].detach().cpu().numpy()
-        pred_R = rotation_6d_to_matrix(pred[1]).detach().cpu().numpy()
-        tgt_t  = batch.target_reg[0].detach().cpu().numpy()
-        tgt_R  = batch.target_reg[1].detach().cpu().numpy()
+        # .float() before .numpy(): under bf16 AMP the predictions are bfloat16,
+        # which numpy cannot represent.
+        pred_t = pred[0].detach().float().cpu().numpy()
+        pred_R = rotation_6d_to_matrix(pred[1]).detach().float().cpu().numpy()
+        tgt_t  = batch.target_reg[0].detach().float().cpu().numpy()
+        tgt_R  = batch.target_reg[1].detach().float().cpu().numpy()
         pred_Ts   = [Transform.from_rotation_translation(pred_R[i], pred_t[i])
                      for i in range(B)]
         target_Ts = [Transform.from_rotation_translation(tgt_R[i], tgt_t[i])
