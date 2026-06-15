@@ -88,6 +88,10 @@ KITTI_MODE=default bash deploy/vast/provision.sh
 ```bash
 cd /workspace/unical
 
+# (optional) Weights & Biases tracking — charts + best/last checkpoints.
+# train_vast.sh enables logger=wandb by default; just provide the key:
+export WANDB_API_KEY=...        # or run: wandb login
+
 # GPU-friendly defaults via the wrapper (forwards Hydra overrides):
 bash deploy/vast/train_vast.sh trainer.max_epochs=500 data.batch_size=16
 

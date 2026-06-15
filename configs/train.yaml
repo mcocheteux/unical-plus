@@ -5,6 +5,7 @@ defaults:
   - data: kitti
   - model: unical
   - experiment: default
+  - logger: csv          # override with `logger=wandb` to track on Weights & Biases
   - _self_
 
 # ── Paths ────────────────────────────────────────────────────────────────────
@@ -20,14 +21,5 @@ trainer:
   log_every_n_steps: 20
   val_check_interval: 1.0
   gradient_clip_val: 1.0
-
-# ── Logger ──────────────────────────────────────────────────────────────────
-# CSVLogger has no extra dependencies. For TensorBoard/W&B install the `logger`
-# extra and swap _target_ for pytorch_lightning.loggers.TensorBoardLogger /
-# pytorch_lightning.loggers.WandbLogger.
-logger:
-  _target_: pytorch_lightning.loggers.CSVLogger
-  save_dir: ${log_dir}
-  name:     unical
 
 seed: 42
