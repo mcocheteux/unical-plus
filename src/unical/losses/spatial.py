@@ -12,8 +12,6 @@ Reference: https://ieeexplore.ieee.org/document/9599702
 """
 from __future__ import annotations
 
-from typing import Dict, Tuple
-
 import torch
 import torch.nn as nn
 
@@ -36,9 +34,9 @@ class SpatialLoss(nn.Module):
 
     def forward(
         self,
-        pred:  Tuple[torch.Tensor, torch.Tensor],
+        pred:  tuple[torch.Tensor, torch.Tensor],
         batch: Batch,
-    ) -> Dict[str, torch.Tensor]:
+    ) -> dict[str, torch.Tensor]:
         pred_t, pred_r = pred
         device = pred_t.device
         B = pred_t.shape[0]

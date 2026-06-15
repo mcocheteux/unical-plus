@@ -3,7 +3,7 @@ Point-cloud ↔ image projection utilities (pure numpy, no device dependency).
 """
 from __future__ import annotations
 
-from typing import Callable, Tuple
+from collections.abc import Callable
 
 import cv2
 import numpy as np
@@ -51,8 +51,8 @@ class PointCloudProjector:
 
     @staticmethod
     def scale_to_image(pcl: np.ndarray,
-                       new_hw: Tuple[int, int],
-                       old_hw: Tuple[int, int]) -> np.ndarray:
+                       new_hw: tuple[int, int],
+                       old_hw: tuple[int, int]) -> np.ndarray:
         """Scale projected u,v coordinates from old to new image resolution."""
         H_new, W_new = new_hw
         H_old, W_old = old_hw
@@ -63,7 +63,7 @@ class PointCloudProjector:
 
     @staticmethod
     def to_2d_map(pcl: np.ndarray,
-                  hw: Tuple[int, int],
+                  hw: tuple[int, int],
                   add_intensity: bool = False) -> np.ndarray:
         """
         Rasterise projected points into a (H, W, C) lidar map.

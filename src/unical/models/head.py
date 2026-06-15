@@ -7,8 +7,6 @@ feature processing.
 """
 from __future__ import annotations
 
-from typing import Tuple
-
 import torch
 import torch.nn as nn
 
@@ -62,7 +60,7 @@ class SplitRegressionHead(nn.Module):
         # Rotation branch
         self.rot_head   = _mlp([trunk_out] + list(rot_hidden)   + [3], activate_last=True)
 
-    def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+    def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Args:
             x: (B, in_features)

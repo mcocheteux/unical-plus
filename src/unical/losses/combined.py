@@ -3,8 +3,6 @@ Combined loss that sums regression and spatial terms.
 """
 from __future__ import annotations
 
-from typing import Dict, Tuple
-
 import torch
 import torch.nn as nn
 
@@ -33,10 +31,10 @@ class CombinedLoss(nn.Module):
 
     def forward(
         self,
-        pred:  Tuple[torch.Tensor, torch.Tensor],
+        pred:  tuple[torch.Tensor, torch.Tensor],
         batch: Batch,
-    ) -> Dict[str, torch.Tensor]:
-        losses: Dict[str, torch.Tensor] = {}
+    ) -> dict[str, torch.Tensor]:
+        losses: dict[str, torch.Tensor] = {}
         losses.update(self.regression(pred, batch))
         if self.spatial is not None:
             losses.update(self.spatial(pred, batch))
