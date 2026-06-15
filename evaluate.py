@@ -2,26 +2,23 @@
 Standalone evaluation on the test split.
 
 Usage:
-    python evaluate.py data_dir=/path/to/kitti_raw ckpt=logs/checkpoints/last.ckpt
+    python evaluate.py data_dir=/path/to/kitti_raw +ckpt=logs/checkpoints/last.ckpt
 """
 from __future__ import annotations
 
-import os
-
 import hydra
 import pytorch_lightning as L
+import torch
 from hydra.utils import instantiate
 from omegaconf import DictConfig
 
-os.sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
-
-from unical.models.module import UniCal
+torch.set_float32_matmul_precision("high")
 
 
 @hydra.main(config_path="configs", config_name="train", version_base="1.3")
 def main(cfg: DictConfig) -> None:
     ckpt: str = cfg.get("ckpt", None)
-    assert ckpt, "Provide a checkpoint path: ckpt=/path/to/model.ckpt"
+    assert ckpt, "Provide a checkpoint path: +ckpt=/path/to/model.ckpt"
 
     L.seed_everything(cfg.seed, workers=True)
 

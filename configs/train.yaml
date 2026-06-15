@@ -16,8 +16,18 @@ trainer:
   max_epochs:      500
   accelerator:     auto    # auto-detects MPS on Apple Silicon, CUDA on Linux/Windows, CPU otherwise
   devices:         1
-  precision:       "32-true"
+  precision:       "32-true"   # on a CUDA box, "bf16-mixed" is faster and uses less memory
   log_every_n_steps: 20
   val_check_interval: 1.0
+  gradient_clip_val: 1.0
+
+# ── Logger ──────────────────────────────────────────────────────────────────
+# CSVLogger has no extra dependencies. For TensorBoard/W&B install the `logger`
+# extra and swap _target_ for pytorch_lightning.loggers.TensorBoardLogger /
+# pytorch_lightning.loggers.WandbLogger.
+logger:
+  _target_: pytorch_lightning.loggers.CSVLogger
+  save_dir: ${log_dir}
+  name:     unical
 
 seed: 42
