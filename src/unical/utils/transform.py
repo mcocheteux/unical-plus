@@ -190,6 +190,53 @@ def euler_to_transform_matrix(trans: torch.Tensor, rot: torch.Tensor) -> torch.T
     return T
 
 
+def rotation_6d_to_matrix(d6: torch.Tensor) -> torch.Tensor:
+    """
+    Differentiable 6-D rotation representation -> 3x3 rotation matrix.
+
+    Implements the continuous representation of Zhou et al., "On the Continuity
+    of Rotation Representations in Neural Networks" (CVPR 2019) via Gram-Schmidt.
+    Continuous representations are far easier for a network to regress than
+    Euler angles (no gimbal lock / wrap-around discontinuities).
+
+    Args:
+        d6: (..., 6) tensor.
+
+    Returns:
+        (..., 3, 3) rotation matrices whose rows are the orthonormal basis.
+    """
+    a1, a2 = d6[..., :3], d6[..., 3:]
+    b1 = torch.nn.functional.normalize(a1, dim=-1)
+    b2 = a2 - (b1 * a2).sum(dim=-1, keepdim=True) * b1
+    b2 = torch.nn.functional.normalize(b2, dim=-1)
+    b3 = torch.cross(b1, b2, dim=-1)
+    return torch.stack((b1, b2, b3), dim=-2)
+
+
+def matrix_to_rotation_6d(matrix: torch.Tensor) -> torch.Tensor:
+    """Inverse of :func:`rotation_6d_to_matrix` (drops the last row)."""
+    return matrix[..., :2, :].clone().reshape(*matrix.shape[:-2], 6)
+
+
+def build_transform_matrix(trans: torch.Tensor, rot_matrix: torch.Tensor) -> torch.Tensor:
+    """
+    Batched 4x4 homogeneous transform from translation and a rotation matrix.
+
+    Args:
+        trans:      (..., 3) translation.
+        rot_matrix: (..., 3, 3) rotation matrix.
+
+    Returns:
+        (..., 4, 4) homogeneous transform on the inputs' device (differentiable).
+    """
+    shape = trans.shape[:-1]
+    T = torch.zeros(*shape, 4, 4, device=trans.device, dtype=trans.dtype)
+    T[..., :3, :3] = rot_matrix
+    T[..., :3, 3] = trans
+    T[..., 3, 3] = 1.0
+    return T
+
+
 # ---------------------------------------------------------------------------
 # Transform class
 # ---------------------------------------------------------------------------

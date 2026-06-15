@@ -26,9 +26,11 @@ class ErrorGenerator:
         self._r_rad = math.radians(r_range)
         self._t_m   = t_range / 100.0          # cm → m
 
-    def __call__(self) -> Transform:
-        rot   = torch.empty(3).uniform_(-self._r_rad, self._r_rad)
-        trans = torch.empty(3).uniform_(-self._t_m,   self._t_m)
+    def __call__(self, generator: torch.Generator | None = None) -> Transform:
+        """Sample a decalibration. Pass a seeded ``generator`` for reproducibility
+        (used by the val/test splits so their decalibrations are deterministic)."""
+        rot   = torch.empty(3).uniform_(-self._r_rad, self._r_rad, generator=generator)
+        trans = torch.empty(3).uniform_(-self._t_m,   self._t_m,   generator=generator)
         T = euler_to_transform_matrix(trans, rot).cpu().numpy()
         return Transform(T)
 
