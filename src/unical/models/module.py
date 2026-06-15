@@ -10,14 +10,13 @@ from typing import Any
 
 import pytorch_lightning as L
 import torch
-import torch.nn as nn
 
 from unical.data.dataset import Batch
 from unical.losses.combined import CombinedLoss
 from unical.models.backbone import MobileViTBackbone
 from unical.models.head import SplitRegressionHead
 from unical.utils.metrics import CalibMetrics
-from unical.utils.transform import Transform
+from unical.utils.transform import Transform, rotation_6d_to_matrix
 
 
 class UniCal(L.LightningModule):
@@ -34,11 +33,12 @@ class UniCal(L.LightningModule):
 
     def __init__(
         self,
-        backbone:     MobileViTBackbone,
-        head:         SplitRegressionHead,
-        loss:         CombinedLoss,
-        lr:           float = 3e-5,
-        weight_decay: float = 0.0,
+        backbone:      MobileViTBackbone,
+        head:          SplitRegressionHead,
+        loss:          CombinedLoss,
+        lr:            float = 3e-5,
+        weight_decay:  float = 1e-4,
+        warmup_epochs: int   = 0,
     ) -> None:
         super().__init__()
         self.save_hyperparameters(ignore=["backbone", "head", "loss"])
@@ -56,7 +56,7 @@ class UniCal(L.LightningModule):
     # ------------------------------------------------------------------
 
     def forward(self, batch: Batch) -> tuple[torch.Tensor, torch.Tensor]:
-        """Return (trans_pred (B,3), rot_pred (B,3))."""
+        """Return (trans_pred (B,3), rot6d_pred (B,6))."""
         features = self.backbone(batch)
         return self.head(features)
 
@@ -66,13 +66,17 @@ class UniCal(L.LightningModule):
 
     def _step(self, batch: Batch) -> tuple[dict[str, torch.Tensor],
                                            list[Transform], list[Transform]]:
-        pred = self(batch)                           # (trans, rot)
+        pred = self(batch)                           # (trans, rot6d)
         losses = self.loss_fn(pred, batch)           # dict with "loss", sub-keys
 
         B = pred[0].shape[0]
-        pred_Ts   = [Transform.from_euler(pred[0][i],          pred[1][i])
+        pred_t = pred[0].detach().cpu().numpy()
+        pred_R = rotation_6d_to_matrix(pred[1]).detach().cpu().numpy()
+        tgt_t  = batch.target_reg[0].detach().cpu().numpy()
+        tgt_R  = batch.target_reg[1].detach().cpu().numpy()
+        pred_Ts   = [Transform.from_rotation_translation(pred_R[i], pred_t[i])
                      for i in range(B)]
-        target_Ts = [Transform.from_euler(batch.target_reg[0][i], batch.target_reg[1][i])
+        target_Ts = [Transform.from_rotation_translation(tgt_R[i], tgt_t[i])
                      for i in range(B)]
         return losses, pred_Ts, target_Ts
 
@@ -129,12 +133,25 @@ class UniCal(L.LightningModule):
     # ------------------------------------------------------------------
 
     def configure_optimizers(self) -> dict[str, Any]:
-        opt = torch.optim.Adam(
+        opt = torch.optim.AdamW(
             self.parameters(),
             lr=self.hparams.lr,
             weight_decay=self.hparams.weight_decay,
         )
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-            opt, T_max=self.trainer.max_epochs, eta_min=1e-7
+        max_epochs = self.trainer.max_epochs
+        warmup = min(self.hparams.warmup_epochs, max(max_epochs - 1, 0))
+        cosine = torch.optim.lr_scheduler.CosineAnnealingLR(
+            opt, T_max=max(max_epochs - warmup, 1), eta_min=1e-7
         )
+        if warmup > 0:
+            warmup_sched = torch.optim.lr_scheduler.LinearLR(
+                opt, start_factor=1e-2, total_iters=warmup
+            )
+            scheduler: torch.optim.lr_scheduler.LRScheduler = (
+                torch.optim.lr_scheduler.SequentialLR(
+                    opt, schedulers=[warmup_sched, cosine], milestones=[warmup]
+                )
+            )
+        else:
+            scheduler = cosine
         return {"optimizer": opt, "lr_scheduler": {"scheduler": scheduler, "interval": "epoch"}}
