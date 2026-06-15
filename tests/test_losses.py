@@ -52,6 +52,18 @@ def test_spatial_loss_gradient_reaches_predictions():
     assert pred_r6.grad.abs().sum() > 0
 
 
+def test_spatial_loss_handles_low_precision_inputs():
+    """Regression test: geometry must not choke on bf16 (AMP) predictions."""
+    batch = _fake_batch()
+    pred_t = torch.randn(2, 3, dtype=torch.bfloat16, requires_grad=True)
+    pred_r6 = torch.randn(2, 6, dtype=torch.bfloat16, requires_grad=True)
+    out = SpatialLoss()((pred_t, pred_r6), batch)
+    total = sum(out.values())
+    assert torch.isfinite(total)
+    total.backward()
+    assert pred_t.grad is not None and pred_r6.grad is not None
+
+
 def test_combined_loss_has_total():
     batch = _fake_batch()
     pred = (torch.randn(2, 3, requires_grad=True), torch.randn(2, 6, requires_grad=True))

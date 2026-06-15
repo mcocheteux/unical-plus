@@ -41,11 +41,22 @@ class SpatialLoss(nn.Module):
         device = pred_t.device
         B = pred_t.shape[0]
 
+        # Geometry must run in full precision: rigid-transform math (and the
+        # ground-truth/initial extrinsics) are float32, and low-precision matmuls
+        # under AMP are both inaccurate and dtype-incompatible. Disable autocast
+        # and cast the predictions to float32 (gradients still flow back to AMP).
+        autocast_ctx = torch.autocast(device_type=device.type, enabled=False)
+        autocast_ctx.__enter__()
+        pred_t  = pred_t.float()
+        pred_r6 = pred_r6.float()
+
         # Differentiable predicted decalibration -> its inverse (the recalibration).
-        # Building this with torch keeps the gradient path to the network's outputs.
+        # For a rigid transform [R|t] the inverse is exactly [R^T | -R^T t], which
+        # avoids torch.linalg.inv (unsupported in low precision) and is stable/fast.
         pred_R    = rotation_6d_to_matrix(pred_r6)               # (B, 3, 3)
-        T_pred    = build_transform_matrix(pred_t, pred_R)       # (B, 4, 4)
-        T_fix     = torch.linalg.inv(T_pred)                     # (B, 4, 4), differentiable
+        R_inv     = pred_R.transpose(-1, -2)                     # (B, 3, 3) = R^-1
+        t_inv     = -torch.einsum("bij,bj->bi", R_inv, pred_t)   # (B, 3)
+        T_fix     = build_transform_matrix(t_inv, R_inv)         # (B, 4, 4), differentiable
 
         pts_gt_list:   list[torch.Tensor] = []
         pts_pred_list: list[torch.Tensor] = []
@@ -83,6 +94,7 @@ class SpatialLoss(nn.Module):
         centroid_loss = self._mse(c_pred, c_gt)   * self.centroid_weight
         pcl_loss      = self._mse(pts_pred, pts_gt) * self.pcl_weight
 
+        autocast_ctx.__exit__(None, None, None)
         return {
             "loss/spatial_centroid": centroid_loss,
             "loss/spatial_pcl":      pcl_loss,
