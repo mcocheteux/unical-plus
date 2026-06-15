@@ -9,11 +9,9 @@ touching any specific device.
 from __future__ import annotations
 
 import math
-from typing import Tuple
 
 import numpy as np
 import torch
-
 
 # ---------------------------------------------------------------------------
 # Axis-sequence tables (Shoemake / robotics-toolbox convention)
@@ -52,13 +50,25 @@ def euler_to_matrix_np(ai: float, aj: float, ak: float, axes: str = "sxyz") -> n
     sc, ss = si * ck, si * sk
     T = np.eye(4)
     if repetition:
-        T[i, i] = cj;    T[i, j] = sj * si; T[i, k] = sj * ci
-        T[j, i] = sj * sk; T[j, j] = -cj * ss + cc; T[j, k] = -cj * cs - sc
-        T[k, i] = -sj * ck; T[k, j] = cj * sc + cs; T[k, k] = cj * cc - ss
+        T[i, i] = cj
+        T[i, j] = sj * si
+        T[i, k] = sj * ci
+        T[j, i] = sj * sk
+        T[j, j] = -cj * ss + cc
+        T[j, k] = -cj * cs - sc
+        T[k, i] = -sj * ck
+        T[k, j] = cj * sc + cs
+        T[k, k] = cj * cc - ss
     else:
-        T[i, i] = cj * ck; T[i, j] = sj * sc - cs; T[i, k] = sj * cc + ss
-        T[j, i] = cj * sk; T[j, j] = sj * ss + cc; T[j, k] = sj * cs - sc
-        T[k, i] = -sj;     T[k, j] = cj * si;       T[k, k] = cj * ci
+        T[i, i] = cj * ck
+        T[i, j] = sj * sc - cs
+        T[i, k] = sj * cc + ss
+        T[j, i] = cj * sk
+        T[j, j] = sj * ss + cc
+        T[j, k] = sj * cs - sc
+        T[k, i] = -sj
+        T[k, j] = cj * si
+        T[k, k] = cj * ci
     return T
 
 
@@ -180,6 +190,53 @@ def euler_to_transform_matrix(trans: torch.Tensor, rot: torch.Tensor) -> torch.T
     return T
 
 
+def rotation_6d_to_matrix(d6: torch.Tensor) -> torch.Tensor:
+    """
+    Differentiable 6-D rotation representation -> 3x3 rotation matrix.
+
+    Implements the continuous representation of Zhou et al., "On the Continuity
+    of Rotation Representations in Neural Networks" (CVPR 2019) via Gram-Schmidt.
+    Continuous representations are far easier for a network to regress than
+    Euler angles (no gimbal lock / wrap-around discontinuities).
+
+    Args:
+        d6: (..., 6) tensor.
+
+    Returns:
+        (..., 3, 3) rotation matrices whose rows are the orthonormal basis.
+    """
+    a1, a2 = d6[..., :3], d6[..., 3:]
+    b1 = torch.nn.functional.normalize(a1, dim=-1)
+    b2 = a2 - (b1 * a2).sum(dim=-1, keepdim=True) * b1
+    b2 = torch.nn.functional.normalize(b2, dim=-1)
+    b3 = torch.cross(b1, b2, dim=-1)
+    return torch.stack((b1, b2, b3), dim=-2)
+
+
+def matrix_to_rotation_6d(matrix: torch.Tensor) -> torch.Tensor:
+    """Inverse of :func:`rotation_6d_to_matrix` (drops the last row)."""
+    return matrix[..., :2, :].clone().reshape(*matrix.shape[:-2], 6)
+
+
+def build_transform_matrix(trans: torch.Tensor, rot_matrix: torch.Tensor) -> torch.Tensor:
+    """
+    Batched 4x4 homogeneous transform from translation and a rotation matrix.
+
+    Args:
+        trans:      (..., 3) translation.
+        rot_matrix: (..., 3, 3) rotation matrix.
+
+    Returns:
+        (..., 4, 4) homogeneous transform on the inputs' device (differentiable).
+    """
+    shape = trans.shape[:-1]
+    T = torch.zeros(*shape, 4, 4, device=trans.device, dtype=trans.dtype)
+    T[..., :3, :3] = rot_matrix
+    T[..., :3, 3] = trans
+    T[..., 3, 3] = 1.0
+    return T
+
+
 # ---------------------------------------------------------------------------
 # Transform class
 # ---------------------------------------------------------------------------
@@ -202,11 +259,11 @@ class Transform:
     # ------------------------------------------------------------------
 
     @classmethod
-    def from_matrix(cls, matrix: np.ndarray) -> "Transform":
+    def from_matrix(cls, matrix: np.ndarray) -> Transform:
         return cls(matrix)
 
     @classmethod
-    def from_rotation_translation(cls, R: np.ndarray, t: np.ndarray) -> "Transform":
+    def from_rotation_translation(cls, R: np.ndarray, t: np.ndarray) -> Transform:
         assert R.shape == (3, 3), f"Expected (3,3), got {R.shape}"
         assert t.shape == (3,),   f"Expected (3,), got {t.shape}"
         T = np.eye(4, dtype=np.float32)
@@ -215,7 +272,7 @@ class Transform:
         return cls(T)
 
     @classmethod
-    def from_euler(cls, trans: torch.Tensor | np.ndarray, rot: torch.Tensor | np.ndarray) -> "Transform":
+    def from_euler(cls, trans: torch.Tensor | np.ndarray, rot: torch.Tensor | np.ndarray) -> Transform:
         """Create from translation (3,) and Euler angles (3,) — supports tensors on any device."""
         if isinstance(trans, torch.Tensor):
             trans_np = trans.detach().cpu().float().numpy().squeeze()
@@ -231,7 +288,7 @@ class Transform:
         return cls(T.astype(np.float32))
 
     @classmethod
-    def from_quaternion(cls, trans: np.ndarray, quat: np.ndarray) -> "Transform":
+    def from_quaternion(cls, trans: np.ndarray, quat: np.ndarray) -> Transform:
         """Create from translation (3,) and quaternion [w,x,y,z] (4,)."""
         T = quaternion_to_matrix_np(quat)
         T[:3, 3] = trans
@@ -241,10 +298,10 @@ class Transform:
     # Operators
     # ------------------------------------------------------------------
 
-    def __matmul__(self, other: "Transform") -> "Transform":
+    def __matmul__(self, other: Transform) -> Transform:
         return Transform(self._T @ other._T)
 
-    def inverse(self) -> "Transform":
+    def inverse(self) -> Transform:
         R = self._T[:3, :3].T
         t = self._T[:3, 3]
         inv = np.eye(4, dtype=np.float32)
@@ -290,7 +347,7 @@ class Transform:
     # Decompose to target representation
     # ------------------------------------------------------------------
 
-    def to_euler_components(self) -> Tuple[np.ndarray, np.ndarray]:
+    def to_euler_components(self) -> tuple[np.ndarray, np.ndarray]:
         """Return (translation (3,), euler_angles (3,)) both float32."""
         return self.translation, self.euler
 
