@@ -12,13 +12,11 @@ Reference: https://ieeexplore.ieee.org/document/9599702
 """
 from __future__ import annotations
 
-from typing import Dict, Tuple
-
 import torch
 import torch.nn as nn
 
 from unical.data.dataset import Batch
-from unical.utils.transform import Transform
+from unical.utils.transform import build_transform_matrix, rotation_6d_to_matrix
 
 
 class SpatialLoss(nn.Module):
@@ -36,23 +34,28 @@ class SpatialLoss(nn.Module):
 
     def forward(
         self,
-        pred:  Tuple[torch.Tensor, torch.Tensor],
+        pred:  tuple[torch.Tensor, torch.Tensor],
         batch: Batch,
-    ) -> Dict[str, torch.Tensor]:
-        pred_t, pred_r = pred
+    ) -> dict[str, torch.Tensor]:
+        pred_t, pred_r6 = pred
         device = pred_t.device
         B = pred_t.shape[0]
+
+        # Differentiable predicted decalibration -> its inverse (the recalibration).
+        # Building this with torch keeps the gradient path to the network's outputs.
+        pred_R    = rotation_6d_to_matrix(pred_r6)               # (B, 3, 3)
+        T_pred    = build_transform_matrix(pred_t, pred_R)       # (B, 4, 4)
+        T_fix     = torch.linalg.inv(T_pred)                     # (B, 4, 4), differentiable
 
         pts_gt_list:   list[torch.Tensor] = []
         pts_pred_list: list[torch.Tensor] = []
         min_pts = float("inf")
 
         for i in range(B):
-            # Reconstruct predicted recalibration in camera frame
-            T_pred   = Transform.from_euler(pred_t[i], pred_r[i])
-            T_fix    = T_pred.inverse()
-            T_init   = batch.metadata[i]["T_init"]   # Transform (numpy)
-            T_recalib = T_fix @ T_init                # Transform
+            # Constant (no-grad) initial / ground-truth extrinsics for this sample.
+            T_init   = batch.metadata[i]["T_init"].to_torch(device)   # (4, 4)
+            T_gt_torch = batch.metadata[i]["T_gt"].to_torch(device)   # (4, 4)
+            T_recalib = T_fix[i] @ T_init                             # (4, 4), grad via T_fix
 
             # Raw scan: keep only points with intensity > 0 (filters padding zeros)
             scan = batch.pcl[i]                       # (N_max, 4) on device
@@ -61,12 +64,10 @@ class SpatialLoss(nn.Module):
             pts[:, 3] = 1.0                           # homogenise
 
             # Ground-truth projection: T_gt @ pts
-            T_gt_torch = batch.metadata[i]["T_gt"].to_torch(device)    # (4, 4)
             pts_gt     = (T_gt_torch @ pts.T).T[:, :3].unsqueeze(0)    # (1, n, 3)
 
             # Predicted recalibrated projection
-            T_rec_torch = T_recalib.to_torch(device)                   # (4, 4)
-            pts_rec     = (T_rec_torch @ pts.T).T[:, :3].unsqueeze(0)  # (1, n, 3)
+            pts_rec     = (T_recalib @ pts.T).T[:, :3].unsqueeze(0)    # (1, n, 3)
 
             min_pts = min(min_pts, pts.shape[0])
             pts_gt_list.append(pts_gt)
