@@ -43,11 +43,12 @@ def main(cfg: DictConfig) -> None:
     # ── Callbacks ─────────────────────────────────────────────────────
     callbacks: list[L.Callback] = [
         ModelCheckpoint(
-            dirpath   = os.path.join(cfg.log_dir, "checkpoints"),
-            filename  = "unical-{epoch:03d}",
-            monitor   = "val/loss",
-            mode      = "min",
-            save_last = True,
+            dirpath    = os.path.join(cfg.log_dir, "checkpoints"),
+            filename   = "unical-{epoch:03d}",
+            monitor    = "val/loss",
+            mode       = "min",
+            save_top_k = 1,        # keep the best checkpoint …
+            save_last  = True,     # … and the most recent one
             auto_insert_metric_name = False,
         ),
         LearningRateMonitor(logging_interval="epoch"),
