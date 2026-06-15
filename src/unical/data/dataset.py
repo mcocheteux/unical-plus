@@ -6,9 +6,8 @@ to the LiDAR projection.  The model must predict that decalibration error.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, NamedTuple, Optional, Tuple
+from typing import Any, NamedTuple
 
 import numpy as np
 import torch
@@ -18,7 +17,6 @@ from unical.data.decalibrator import ErrorGenerator
 from unical.data.preprocessor import DataPreprocessor
 from unical.utils.geometry import load_image_rgb
 from unical.utils.transform import Transform
-
 
 # ---------------------------------------------------------------------------
 # Batch type
@@ -36,16 +34,16 @@ class Batch(NamedTuple):
     """
     img:        torch.Tensor
     lidar_map:  torch.Tensor
-    target_reg: Tuple[torch.Tensor, torch.Tensor]
+    target_reg: tuple[torch.Tensor, torch.Tensor]
     pcl:        torch.Tensor
-    metadata:   List[Dict[str, Any]]
+    metadata:   list[dict[str, Any]]
 
 
 # ---------------------------------------------------------------------------
 # Dataset
 # ---------------------------------------------------------------------------
 
-Split = List[Tuple[str, List[int]]]   # [("2011_09_26", [1, 2, ...]), ...]
+Split = list[tuple[str, list[int]]]   # [("2011_09_26", [1, 2, ...]), ...]
 
 
 class KittiDataset(Dataset):
@@ -71,8 +69,8 @@ class KittiDataset(Dataset):
         self.preprocessor = preprocessor
         self.decalibrator = decalibrator
 
-        self._samples: List[Tuple[str, int, int]] = []  # (date, drive, frame_id)
-        self._date_meta: Dict[str, Dict] = {}
+        self._samples: list[tuple[str, int, int]] = []  # (date, drive, frame_id)
+        self._date_meta: dict[str, dict] = {}
 
         self._parse(split)
 
@@ -95,7 +93,7 @@ class KittiDataset(Dataset):
                         self._samples.append((date, drive, fid))
 
     @staticmethod
-    def _read_calibration(date_dir: Path) -> Dict:
+    def _read_calibration(date_dir: Path) -> dict:
         """Parse KITTI raw calibration files for a date folder."""
         # camera intrinsics
         K = P = None
@@ -124,7 +122,7 @@ class KittiDataset(Dataset):
     def __len__(self) -> int:
         return len(self._samples)
 
-    def __getitem__(self, idx: int) -> Dict:
+    def __getitem__(self, idx: int) -> dict:
         date, drive, fid = self._samples[idx]
         meta = self._date_meta[date]
         K    = meta["K"]
@@ -174,7 +172,7 @@ class KittiDataset(Dataset):
     # ------------------------------------------------------------------
 
     @staticmethod
-    def collate(samples: List[Dict]) -> Batch:
+    def collate(samples: list[dict]) -> Batch:
         img       = torch.stack([s["img"]       for s in samples])
         lidar_map = torch.stack([s["lidar_map"] for s in samples])
         trans     = torch.stack([s["trans"]     for s in samples])

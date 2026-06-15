@@ -3,7 +3,7 @@ Lightning DataModule wrapping the KITTI dataset.
 """
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 import pytorch_lightning as L
 from torch.utils.data import DataLoader
@@ -44,7 +44,7 @@ class KittiDataModule(L.LightningDataModule):
 
     # ------------------------------------------------------------------
 
-    def setup(self, stage: Optional[str] = None) -> None:
+    def setup(self, stage: str | None = None) -> None:
         def _make(key: str) -> KittiDataset:
             return KittiDataset(
                 data_dir     = self.hparams.data_dir,

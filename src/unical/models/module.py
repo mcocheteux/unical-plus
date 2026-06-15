@@ -10,7 +10,6 @@ from typing import Any
 
 import pytorch_lightning as L
 import torch
-import torch.nn as nn
 
 from unical.data.dataset import Batch
 from unical.losses.combined import CombinedLoss

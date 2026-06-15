@@ -3,8 +3,6 @@ Direct regression loss on predicted translation and Euler angles.
 """
 from __future__ import annotations
 
-from typing import Dict, Tuple
-
 import torch
 import torch.nn as nn
 
@@ -28,9 +26,9 @@ class RegressionLoss(nn.Module):
 
     def forward(
         self,
-        pred:  Tuple[torch.Tensor, torch.Tensor],
+        pred:  tuple[torch.Tensor, torch.Tensor],
         batch: Batch,
-    ) -> Dict[str, torch.Tensor]:
+    ) -> dict[str, torch.Tensor]:
         pred_t, pred_r   = pred
         target_t, target_r = batch.target_reg
         t_loss = self._mse(pred_t, target_t) * self.trans_weight

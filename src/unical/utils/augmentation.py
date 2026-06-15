@@ -5,12 +5,10 @@ All operations work on numpy arrays and are device-independent.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Optional, Tuple
+from dataclasses import dataclass
 
 import cv2
 import numpy as np
-
 
 # ---------------------------------------------------------------------------
 # Photometric distortion
@@ -19,8 +17,8 @@ import numpy as np
 @dataclass
 class PhotometricConfig:
     brightness: float = 0.1255          # delta ratio
-    contrast: Tuple[float, float] = (0.5, 1.5)
-    saturation: Tuple[float, float] = (0.80, 1.2)
+    contrast: tuple[float, float] = (0.5, 1.5)
+    saturation: tuple[float, float] = (0.80, 1.2)
     hue: float = 18.0
 
 
@@ -93,13 +91,13 @@ class SpatialConfig:
     translate_dh: float = 0.0           # fraction of height
     zoom_out_prob: float = 0.0
     zoom_out_max: float = 2.0
-    zoom_out_aspect: Tuple[float, float] = (1.0, 1.0)
+    zoom_out_aspect: tuple[float, float] = (1.0, 1.0)
     zoom_in_prob: float = 0.0
-    zoom_in_aspect: Tuple[float, float] = (1.0, 1.0)
-    zoom_in_crop: Tuple[float, float] = (0.5, 1.0)
+    zoom_in_aspect: tuple[float, float] = (1.0, 1.0)
+    zoom_in_crop: tuple[float, float] = (0.5, 1.0)
     crop_box_prob: float = 0.0
-    crop_box_width: Tuple[float, float] = (0.1, 0.3)
-    crop_box_height: Tuple[float, float] = (0.1, 0.3)
+    crop_box_width: tuple[float, float] = (0.1, 0.3)
+    crop_box_height: tuple[float, float] = (0.1, 0.3)
     crop_box_max_n: int = 3
 
 
@@ -129,8 +127,10 @@ class SpatialDistortion:
             H, W = rgb.shape[:2]
             rgb   = cv2.warpAffine(rgb,   M, (W, H), flags=cv2.INTER_LINEAR)
             lidar = cv2.warpAffine(lidar, M, (W, H), flags=cv2.INTER_NEAREST)
-            if rgb.ndim == 2:   rgb   = rgb[:, :, np.newaxis]
-            if lidar.ndim == 2: lidar = lidar[:, :, np.newaxis]
+            if rgb.ndim == 2:
+                rgb = rgb[:, :, np.newaxis]
+            if lidar.ndim == 2:
+                lidar = lidar[:, :, np.newaxis]
 
         prob = np.random.rand()
         if c.zoom_out_prob > 0 and prob < c.zoom_out_prob:
@@ -178,8 +178,10 @@ class SpatialDistortion:
 
         small_rgb   = cv2.resize(rgb,   (new_W, new_H))
         small_lidar = cv2.resize(lidar, (new_W, new_H), interpolation=cv2.INTER_NEAREST)
-        if small_rgb.ndim == 2:   small_rgb   = small_rgb[:, :, np.newaxis]
-        if small_lidar.ndim == 2: small_lidar = small_lidar[:, :, np.newaxis]
+        if small_rgb.ndim == 2:
+            small_rgb = small_rgb[:, :, np.newaxis]
+        if small_lidar.ndim == 2:
+            small_lidar = small_lidar[:, :, np.newaxis]
 
         canvas_rgb   = np.full((H, W, rgb.shape[2]),   127, dtype=rgb.dtype)
         canvas_lidar = np.zeros((H, W, lidar.shape[2]), dtype=lidar.dtype)
@@ -205,8 +207,10 @@ class SpatialDistortion:
         crop_lidar = lidar[y0:y1, x0:x1]
         out_rgb   = cv2.resize(crop_rgb,   (W, H))
         out_lidar = cv2.resize(crop_lidar, (W, H), interpolation=cv2.INTER_NEAREST)
-        if out_rgb.ndim == 2:   out_rgb   = out_rgb[:, :, np.newaxis]
-        if out_lidar.ndim == 2: out_lidar = out_lidar[:, :, np.newaxis]
+        if out_rgb.ndim == 2:
+            out_rgb = out_rgb[:, :, np.newaxis]
+        if out_lidar.ndim == 2:
+            out_lidar = out_lidar[:, :, np.newaxis]
         return out_rgb, out_lidar
 
 
@@ -216,9 +220,9 @@ class SpatialDistortion:
 
 @dataclass
 class AugmentationConfig:
-    photometric: Optional[PhotometricConfig] = None
-    point_cloud: Optional[PointCloudConfig]  = None
-    spatial:     Optional[SpatialConfig]     = None
+    photometric: PhotometricConfig | None = None
+    point_cloud: PointCloudConfig | None  = None
+    spatial:     SpatialConfig | None     = None
 
 
 class Augmentor:

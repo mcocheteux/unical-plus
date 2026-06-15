@@ -4,7 +4,6 @@ Calibration error metrics accumulated over an epoch.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, List
 
 import numpy as np
 
@@ -15,8 +14,8 @@ from unical.utils.transform import Transform, matrix_to_euler_np
 class CalibMetrics:
     """Running storage for one epoch of predictions vs targets."""
 
-    preds:   List[Transform] = field(default_factory=list)
-    targets: List[Transform] = field(default_factory=list)
+    preds:   list[Transform] = field(default_factory=list)
+    targets: list[Transform] = field(default_factory=list)
 
     def add(self, pred: Transform, target: Transform) -> None:
         self.preds.append(pred)
@@ -26,7 +25,7 @@ class CalibMetrics:
         self.preds.clear()
         self.targets.clear()
 
-    def translation_metrics(self) -> Dict[str, float]:
+    def translation_metrics(self) -> dict[str, float]:
         if not self.preds:
             return {}
         errors = np.array([
@@ -44,7 +43,7 @@ class CalibMetrics:
             "trans/global/STD": float(np.std(errors)),
         }
 
-    def rotation_metrics(self) -> Dict[str, float]:
+    def rotation_metrics(self) -> dict[str, float]:
         if not self.preds:
             return {}
         errors = []
@@ -65,5 +64,5 @@ class CalibMetrics:
             "rot/global/STD":  float(np.std(errors)),
         }
 
-    def all_metrics(self) -> Dict[str, float]:
+    def all_metrics(self) -> dict[str, float]:
         return {**self.translation_metrics(), **self.rotation_metrics()}

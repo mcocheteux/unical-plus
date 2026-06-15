@@ -15,7 +15,6 @@ from omegaconf import DictConfig
 
 os.sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
 
-from unical.models.module import UniCal
 
 
 @hydra.main(config_path="configs", config_name="train", version_base="1.3")

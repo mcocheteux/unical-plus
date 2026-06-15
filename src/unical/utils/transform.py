@@ -9,11 +9,9 @@ touching any specific device.
 from __future__ import annotations
 
 import math
-from typing import Tuple
 
 import numpy as np
 import torch
-
 
 # ---------------------------------------------------------------------------
 # Axis-sequence tables (Shoemake / robotics-toolbox convention)
@@ -52,13 +50,25 @@ def euler_to_matrix_np(ai: float, aj: float, ak: float, axes: str = "sxyz") -> n
     sc, ss = si * ck, si * sk
     T = np.eye(4)
     if repetition:
-        T[i, i] = cj;    T[i, j] = sj * si; T[i, k] = sj * ci
-        T[j, i] = sj * sk; T[j, j] = -cj * ss + cc; T[j, k] = -cj * cs - sc
-        T[k, i] = -sj * ck; T[k, j] = cj * sc + cs; T[k, k] = cj * cc - ss
+        T[i, i] = cj
+        T[i, j] = sj * si
+        T[i, k] = sj * ci
+        T[j, i] = sj * sk
+        T[j, j] = -cj * ss + cc
+        T[j, k] = -cj * cs - sc
+        T[k, i] = -sj * ck
+        T[k, j] = cj * sc + cs
+        T[k, k] = cj * cc - ss
     else:
-        T[i, i] = cj * ck; T[i, j] = sj * sc - cs; T[i, k] = sj * cc + ss
-        T[j, i] = cj * sk; T[j, j] = sj * ss + cc; T[j, k] = sj * cs - sc
-        T[k, i] = -sj;     T[k, j] = cj * si;       T[k, k] = cj * ci
+        T[i, i] = cj * ck
+        T[i, j] = sj * sc - cs
+        T[i, k] = sj * cc + ss
+        T[j, i] = cj * sk
+        T[j, j] = sj * ss + cc
+        T[j, k] = sj * cs - sc
+        T[k, i] = -sj
+        T[k, j] = cj * si
+        T[k, k] = cj * ci
     return T
 
 
@@ -202,11 +212,11 @@ class Transform:
     # ------------------------------------------------------------------
 
     @classmethod
-    def from_matrix(cls, matrix: np.ndarray) -> "Transform":
+    def from_matrix(cls, matrix: np.ndarray) -> Transform:
         return cls(matrix)
 
     @classmethod
-    def from_rotation_translation(cls, R: np.ndarray, t: np.ndarray) -> "Transform":
+    def from_rotation_translation(cls, R: np.ndarray, t: np.ndarray) -> Transform:
         assert R.shape == (3, 3), f"Expected (3,3), got {R.shape}"
         assert t.shape == (3,),   f"Expected (3,), got {t.shape}"
         T = np.eye(4, dtype=np.float32)
@@ -215,7 +225,7 @@ class Transform:
         return cls(T)
 
     @classmethod
-    def from_euler(cls, trans: torch.Tensor | np.ndarray, rot: torch.Tensor | np.ndarray) -> "Transform":
+    def from_euler(cls, trans: torch.Tensor | np.ndarray, rot: torch.Tensor | np.ndarray) -> Transform:
         """Create from translation (3,) and Euler angles (3,) — supports tensors on any device."""
         if isinstance(trans, torch.Tensor):
             trans_np = trans.detach().cpu().float().numpy().squeeze()
@@ -231,7 +241,7 @@ class Transform:
         return cls(T.astype(np.float32))
 
     @classmethod
-    def from_quaternion(cls, trans: np.ndarray, quat: np.ndarray) -> "Transform":
+    def from_quaternion(cls, trans: np.ndarray, quat: np.ndarray) -> Transform:
         """Create from translation (3,) and quaternion [w,x,y,z] (4,)."""
         T = quaternion_to_matrix_np(quat)
         T[:3, 3] = trans
@@ -241,10 +251,10 @@ class Transform:
     # Operators
     # ------------------------------------------------------------------
 
-    def __matmul__(self, other: "Transform") -> "Transform":
+    def __matmul__(self, other: Transform) -> Transform:
         return Transform(self._T @ other._T)
 
-    def inverse(self) -> "Transform":
+    def inverse(self) -> Transform:
         R = self._T[:3, :3].T
         t = self._T[:3, 3]
         inv = np.eye(4, dtype=np.float32)
@@ -290,7 +300,7 @@ class Transform:
     # Decompose to target representation
     # ------------------------------------------------------------------
 
-    def to_euler_components(self) -> Tuple[np.ndarray, np.ndarray]:
+    def to_euler_components(self) -> tuple[np.ndarray, np.ndarray]:
         """Return (translation (3,), euler_angles (3,)) both float32."""
         return self.translation, self.euler
 
