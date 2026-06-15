@@ -5,12 +5,11 @@ normalised tensors that the model expects as inputs.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Optional, Tuple
 
 import cv2
 import numpy as np
 
-from unical.utils.augmentation import Augmentor, AugmentationConfig
+from unical.utils.augmentation import AugmentationConfig, Augmentor
 from unical.utils.geometry import (
     PointCloudProjector,
     imagenet_normalize,
@@ -52,8 +51,8 @@ class DataPreprocessor:
         pcl:   np.ndarray,   # (N, 4) float32 [x, y, z, intensity]
         T:     np.ndarray,   # (4, 4) LiDAR→camera extrinsic (decalibrated)
         K:     np.ndarray,   # (3, 3) intrinsic
-        D:     Optional[np.ndarray] = None,  # distortion coefficients
-    ) -> Tuple[np.ndarray, np.ndarray]:
+        D:     np.ndarray | None = None,  # distortion coefficients
+    ) -> tuple[np.ndarray, np.ndarray]:
         # 1. Optional undistort
         if D is not None:
             img = self._undistort(img, K, D)
