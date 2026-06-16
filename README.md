@@ -9,6 +9,17 @@ regress the correction end-to-end without a calibration target.
 Built with PyTorch Lightning and Hydra for reproducibility and clean
 configuration management.
 
+> **Note — unofficial reimplementation.**  This repository is an independent
+> reimplementation of the architecture introduced in:
+>
+> Cocheteux, Low & Bruehlmeier, *"UniCal: a Single-Branch Transformer-Based
+> Model for Camera-to-LiDAR Calibration and Validation"*, arXiv 2304.09715
+> (2023).
+>
+> It is **not** the original code from that work.  The implementation
+> incorporates independent modifications and is not affiliated with or endorsed
+> by the original institution.  No proprietary code is included.
+
 ---
 
 ## Architecture
@@ -195,6 +206,11 @@ Decalibration errors are sampled uniformly in [−1°, +1°] (rotation) and
 ---
 
 ## References
+
+- **Original paper (reimplemented here)**: Cocheteux, Low & Bruehlmeier,
+  *UniCal: a Single-Branch Transformer-Based Model for Camera-to-LiDAR
+  Calibration and Validation*, arXiv 2304.09715, 2023.
+  <https://arxiv.org/abs/2304.09715>
 
 - **MobileViT**: Mehta & Rastegari, *MobileViT: Light-weight, General-purpose,
   and Mobile-friendly Vision Transformer*, ICLR 2022.
