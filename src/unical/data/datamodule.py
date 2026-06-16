@@ -45,19 +45,27 @@ class KittiDataModule(L.LightningDataModule):
     # ------------------------------------------------------------------
 
     def setup(self, stage: str | None = None) -> None:
+        _seeds = {"train": 0, "val": 1, "test": 2}
+
         def _make(key: str) -> KittiDataset:
             # val/test use deterministic (seeded-per-index) decalibrations so their
             # metrics are stable and reproducible across epochs and runs.
+            # Different base seeds ensure val and test draw independent decalibrations.
             return KittiDataset(
                 data_dir      = self.hparams.data_dir,
                 split         = self._splits[key],
                 preprocessor  = self._preprocessor,
                 decalibrator  = self._decalibrator,
                 deterministic = key != "train",
+                seed          = _seeds[key],
             )
-        self.train_ds = _make("train")
-        self.val_ds   = _make("val")
-        self.test_ds  = _make("test")
+        if stage in ("fit", None):
+            self.train_ds = _make("train")
+            self.val_ds   = _make("val")
+        if stage in ("validate", None):
+            self.val_ds   = _make("val")
+        if stage in ("test", "predict", None):
+            self.test_ds  = _make("test")
 
     def _loader(self, ds: KittiDataset, shuffle: bool) -> DataLoader:
         return DataLoader(

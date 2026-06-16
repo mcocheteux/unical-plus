@@ -48,8 +48,8 @@ class ErrorGenerator6D:
         self._r_rad = [math.radians(r) for r in r_range]
         self._t_m   = [t / 100.0 for t in t_range]
 
-    def __call__(self) -> Transform:
-        rot   = torch.tensor([torch.empty(1).uniform_(-r, r).item() for r in self._r_rad])
-        trans = torch.tensor([torch.empty(1).uniform_(-t, t).item() for t in self._t_m])
+    def __call__(self, generator: torch.Generator | None = None) -> Transform:
+        rot   = torch.tensor([torch.empty(1).uniform_(-r, r, generator=generator).item() for r in self._r_rad])
+        trans = torch.tensor([torch.empty(1).uniform_(-t, t, generator=generator).item() for t in self._t_m])
         T = euler_to_transform_matrix(trans, rot).cpu().numpy()
         return Transform(T)

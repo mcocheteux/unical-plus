@@ -45,7 +45,7 @@ class PhotometricDistortion:
         if np.random.randint(2):
             img[:, :, 1] = np.clip(img[:, :, 1] * np.random.uniform(*c.saturation), 0, 255)
         if np.random.randint(2):
-            img[:, :, 0] = np.clip(img[:, :, 0] * np.random.uniform(1, c.hue), 0, 180)
+            img[:, :, 0] = (img[:, :, 0] + np.random.uniform(-c.hue, c.hue)) % 180
         img = cv2.cvtColor(img.astype(np.uint8), cv2.COLOR_HSV2RGB)
 
         if not start_contrast:
@@ -159,13 +159,17 @@ class SpatialDistortion:
         H, W = rgb.shape[:2]
         dx = np.random.randint(-int(W * self.cfg.translate_dw), int(W * self.cfg.translate_dw) + 1)
         dy = np.random.randint(-int(H * self.cfg.translate_dh), int(H * self.cfg.translate_dh) + 1)
-        x0, y0 = max(0, dx), max(0, dy)
-        x1, y1 = min(W, W + dx), min(H, H + dy)
+        # dst window (where pixels land after shift)
+        dst_x0, dst_y0 = max(0, dx), max(0, dy)
+        dst_x1, dst_y1 = min(W, W + dx), min(H, H + dy)
+        # src window (corresponding source region before shift)
+        src_x0, src_y0 = dst_x0 - dx, dst_y0 - dy
+        src_x1, src_y1 = dst_x1 - dx, dst_y1 - dy
 
         out_rgb = np.full_like(rgb, 127)
-        out_rgb[y0:y1, x0:x1] = rgb[y0:y1, x0:x1]
+        out_rgb[dst_y0:dst_y1, dst_x0:dst_x1] = rgb[src_y0:src_y1, src_x0:src_x1]
         out_lidar = np.zeros_like(lidar)
-        out_lidar[y0:y1, x0:x1] = lidar[y0:y1, x0:x1]
+        out_lidar[dst_y0:dst_y1, dst_x0:dst_x1] = lidar[src_y0:src_y1, src_x0:src_x1]
         return out_rgb, out_lidar
 
     def _zoom_out(self, rgb: np.ndarray, lidar: np.ndarray):
