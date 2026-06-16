@@ -116,6 +116,12 @@ class KittiDataset(Dataset):
                     R = np.array(line.split()[1:], dtype=np.float32).reshape(3, 3)
                 elif line.startswith("T:"):
                     t = np.array(line.split()[1:], dtype=np.float32)
+
+        if K is None or P is None:
+            raise ValueError(f"Missing P_rect_02 in {date_dir / 'calib_cam_to_cam.txt'}")
+        if R is None or t is None:
+            raise ValueError(f"Missing R or T in {date_dir / 'calib_velo_to_cam.txt'}")
+
         T_gt = Transform.from_rotation_translation(R, t)
         return {"K": K, "P": P, "T_gt": T_gt}
 

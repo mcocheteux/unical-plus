@@ -47,9 +47,8 @@ class UniCal(L.LightningModule):
         self.head     = head
         self.loss_fn  = loss
 
-        self._train_metrics = CalibMetrics()
-        self._val_metrics   = CalibMetrics()
-        self._test_metrics  = CalibMetrics()
+        self._val_metrics  = CalibMetrics()
+        self._test_metrics = CalibMetrics()
 
     # ------------------------------------------------------------------
     # Forward
@@ -92,9 +91,6 @@ class UniCal(L.LightningModule):
         self.log_dict({f"train/{k}": v for k, v in losses.items()},
                       on_step=True, on_epoch=False, prog_bar=False, sync_dist=True, batch_size=B)
         return losses["loss"]
-
-    def on_train_epoch_end(self) -> None:
-        self._train_metrics.clear()
 
     # ------------------------------------------------------------------
     # Validation
