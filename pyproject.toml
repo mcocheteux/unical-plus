@@ -7,7 +7,7 @@ name = "unical"
 version = "0.1.0"
 description = "UniCal: Camera-LiDAR extrinsic calibration via MobileViT"
 readme = "README.md"
-license = {text = "MIT"}
+license = {text = "CC BY-NC 4.0"}
 requires-python = ">=3.11"
 keywords = [
     "camera-lidar calibration",
@@ -22,7 +22,7 @@ classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Science/Research",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
-    "License :: OSI Approved :: MIT License",
+    "License :: Free for non-commercial use",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",

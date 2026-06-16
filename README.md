@@ -229,4 +229,4 @@ Decalibration errors are sampled uniformly in [−1°, +1°] (rotation) and
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+[CC BY-NC 4.0](LICENSE) — free for research and personal use; commercial use is not permitted.
