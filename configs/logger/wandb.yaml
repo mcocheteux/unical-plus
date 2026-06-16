@@ -1,0 +1,15 @@
+# Weights & Biases logger.
+#
+# Requirements:
+#   * install the logger extra:  uv sync --extra logger
+#   * authenticate: set the WANDB_API_KEY env var (or run `wandb login`)
+#
+# Logs all scalar metrics (train/val/test loss + calibration metrics) as charts,
+# the resolved hyperparameters, and — thanks to log_model=true — the best and
+# last checkpoints as a versioned W&B artifact (aliases "best" and "latest").
+_target_: pytorch_lightning.loggers.WandbLogger
+project:  unical
+entity:   null          # set to your W&B team/username, or leave null for default
+name:     null          # run name; null lets W&B autogenerate one
+save_dir: ${log_dir}
+log_model: true         # upload best + last checkpoints as artifacts at train end
