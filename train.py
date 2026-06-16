@@ -5,6 +5,8 @@ Usage:
     python train.py data_dir=/path/to/kitti_raw
     python train.py data_dir=/path/to/kitti_raw experiment=debug trainer.max_epochs=10
     python train.py data_dir=/path/to/kitti_raw trainer.devices=1 trainer.accelerator=mps
+    python train.py data_dir=/path/to/kitti_raw logger=wandb
+    python train.py data_dir=/path/to/kitti_raw trainer.precision=bf16-mixed
 """
 from __future__ import annotations
 

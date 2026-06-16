@@ -17,8 +17,8 @@ It trains a MobileViT-based camera-LiDAR extrinsic-calibration model.
 ### Lint / test (standard, see `pyproject.toml`)
 - Lint: `uv run ruff check .` — note the repo currently has **pre-existing**
   ruff findings; a non-zero exit does not mean your environment is broken.
-- Tests: `uv run pytest` — there are currently **no test files**, so this
-  collects 0 tests and passes.
+- Tests: `uv run pytest` — runs the suite in `tests/` (model, losses, transforms,
+  augmentation, geometry). All tests use synthetic tensors; no KITTI data needed.
 
 ### Running the app (non-obvious caveats)
 - Both `train.py` and `evaluate.py` **require a KITTI-raw dataset on disk** via
