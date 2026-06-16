@@ -1,0 +1,48 @@
+# UniCal model configuration
+
+_target_: unical.models.module.UniCal
+
+lr:            3.0e-5   # conservative: pretrained MobileViT weights are sensitive
+                        # to large learning rates; cosine annealing handles the decay
+weight_decay:  1.0e-4
+warmup_epochs: 5        # linear LR ramp-up reduces instability from the inflated stem
+
+backbone:
+  _target_: unical.models.backbone.MobileViTBackbone
+  img_channels:        3
+  lidar_channels:      1    # inverse-depth only; set to 2 if preprocessor.cfg.add_intensity=true
+  image_size:          512
+  hidden_sizes:        [144, 192, 240]  # MobileViT-S channel progression; the final
+                                        # stage produces a 640-dim GAP feature vector
+  num_attention_heads: 4
+  patch_size:          2                # 2×2 local windows inside MobileViT attention blocks
+  conv_kernel_size:    3
+  # HuggingFace Hub id for ImageNet-pretrained MobileViT-S weights.
+  # The 3-channel RGB stem is inflated to 4 channels (lidar channel
+  # initialised to the mean of the three RGB filter banks).
+  # Set to null to train the backbone from scratch.
+  pretrained:          apple/mobilevit-small
+  spatial_head:        true   # extra conv layer before GAP preserves spatial
+                              # misalignment cues that are critical for calibration
+
+head:
+  _target_: unical.models.head.SplitRegressionHead
+  # MobileViT-S with hidden_sizes=[144,192,240] produces a 640-dim feature
+  # vector after global average pooling (sum of last-stage channel counts).
+  in_features:   640
+  common_hidden: []
+  trans_hidden:  [640, 256]
+  rot_hidden:    [640, 256]
+  rot_dim:       6          # 6-D continuous rotation representation (Zhou et al.
+                            # CVPR 2019); avoids gimbal lock and quaternion double-cover
+
+loss:
+  _target_: unical.losses.combined.CombinedLoss
+  regression:
+    _target_: unical.losses.regression.RegressionLoss
+    trans_weight: 1.0
+    rot_weight:   1.0
+  spatial:
+    _target_: unical.losses.spatial.SpatialLoss
+    centroid_weight: 1.0
+    pcl_weight:      1.0

@@ -1,0 +1,9 @@
+# Tiny split for quick local debugging
+
+splits:
+  train:
+    - ["2011_09_26", [1]]
+  val:
+    - ["2011_09_26", [5]]
+  test:
+    - ["2011_09_26", [5]]
