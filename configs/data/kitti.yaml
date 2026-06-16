@@ -5,19 +5,21 @@ _target_: unical.data.datamodule.KittiDataModule
 data_dir: ${data_dir}   # resolved from top-level train.yaml
 
 batch_size:  8
-num_workers: 4       # set to 0 if you get DataLoader worker errors on macOS
-pin_memory:  false   # MPS does not support pinned memory
+num_workers: 4       # reduce to 0 if DataLoader workers crash on macOS
+pin_memory:  false   # MPS does not support pinned memory; harmless to leave false on CUDA
 
-# Splits — imported from experiment config
+# Splits — imported from experiment config (see configs/experiment/)
 splits: ${experiment.splits}
 
-# Decalibrator
+# Decalibrator: samples a random rigid-body perturbation T_decal ~ Uniform(-range, +range)
+# that is applied to the ground-truth extrinsic to create the noisy initial calibration.
+# The model is trained to predict and correct this perturbation.
 decalibrator:
   _target_: unical.data.decalibrator.ErrorGenerator
-  r_range: 1.0      # degrees
-  t_range: 10.0     # centimetres
+  r_range: 1.0      # max rotation error per axis, in degrees  (LCCNet/RegNet regime)
+  t_range: 10.0     # max translation error per axis, in centimetres
 
-# Preprocessor
+# Preprocessor: resizes image + LiDAR map, applies augmentation, normalises
 preprocessor:
   _target_: unical.data.preprocessor.DataPreprocessor
   cfg:
@@ -25,8 +27,13 @@ preprocessor:
     width:         512
     height:        512
     grayscale:     false
-    add_intensity: false
-    min_depth:     2.0
-    max_depth:     80.0
+    add_intensity: false   # set to true to include LiDAR intensity as a second channel
+                           # (also set backbone.lidar_channels=2)
+    min_depth:     2.0     # metres; removes near-field noise and the vehicle body
+    max_depth:     80.0    # metres; discards very sparse distant returns
     augmentation:
       _target_: unical.utils.augmentation.AugmentationConfig
+      # All sub-configs (photometric, point_cloud, spatial) default to null (no augmentation).
+      # Example — enable photometric jitter during training:
+      # photometric:
+      #   _target_: unical.utils.augmentation.PhotometricConfig

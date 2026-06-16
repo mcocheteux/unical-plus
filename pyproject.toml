@@ -6,7 +6,27 @@ build-backend = "hatchling.build"
 name = "unical"
 version = "0.1.0"
 description = "UniCal: Camera-LiDAR extrinsic calibration via MobileViT"
+readme = "README.md"
+license = {text = "MIT"}
 requires-python = ">=3.11"
+keywords = [
+    "camera-lidar calibration",
+    "extrinsic calibration",
+    "sensor fusion",
+    "MobileViT",
+    "autonomous driving",
+    "KITTI",
+    "deep learning",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
 dependencies = [
     "torch>=2.2.0",
     "torchvision>=0.17.0",
@@ -20,6 +40,10 @@ dependencies = [
     "scipy>=1.12.0",
 ]
 
+[project.urls]
+Homepage = "https://github.com/mcocheteux/unical"
+Repository = "https://github.com/mcocheteux/unical"
+
 [project.optional-dependencies]
 dev = [
     "ruff>=0.3.0",
@@ -32,6 +56,9 @@ logger = [
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/unical"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
 
 [tool.ruff]
 line-length = 100
