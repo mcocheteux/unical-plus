@@ -8,6 +8,7 @@ Usage:
     python train.py data_dir=/path/to/kitti_raw logger=wandb
     python train.py data_dir=/path/to/kitti_raw trainer.precision=bf16-mixed
 """
+
 from __future__ import annotations
 
 import os
@@ -45,13 +46,13 @@ def main(cfg: DictConfig) -> None:
     # ── Callbacks ─────────────────────────────────────────────────────
     callbacks: list[L.Callback] = [
         ModelCheckpoint(
-            dirpath    = os.path.join(cfg.log_dir, "checkpoints"),
-            filename   = "unical-{epoch:03d}",
-            monitor    = "val/loss",
-            mode       = "min",
-            save_top_k = 1,        # keep the best checkpoint …
-            save_last  = True,     # … and the most recent one
-            auto_insert_metric_name = False,
+            dirpath=os.path.join(cfg.log_dir, "checkpoints"),
+            filename="unical-{epoch:03d}",
+            monitor="val/loss",
+            mode="min",
+            save_top_k=1,  # keep the best checkpoint …
+            save_last=True,  # … and the most recent one
+            auto_insert_metric_name=False,
         ),
         LearningRateMonitor(logging_interval="epoch"),
         RichProgressBar(),
@@ -60,9 +61,9 @@ def main(cfg: DictConfig) -> None:
     # ── Trainer ───────────────────────────────────────────────────────
     trainer = L.Trainer(
         **OmegaConf.to_container(cfg.trainer, resolve=True),
-        callbacks        = callbacks,
-        logger           = logger,
-        default_root_dir = cfg.log_dir,
+        callbacks=callbacks,
+        logger=logger,
+        default_root_dir=cfg.log_dir,
     )
 
     trainer.fit(model, datamodule=datamodule)

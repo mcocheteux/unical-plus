@@ -1,4 +1,5 @@
 """Unit tests for rotation / transform utilities."""
+
 import numpy as np
 import torch
 
@@ -14,8 +15,9 @@ from unical.utils.transform import (
 def _is_rotation(R: torch.Tensor, atol: float = 1e-5) -> bool:
     eye = torch.eye(3, dtype=R.dtype)
     rrt = R @ R.transpose(-1, -2)
-    return torch.allclose(rrt, eye.expand_as(rrt), atol=atol) \
-        and torch.allclose(torch.det(R), torch.ones(R.shape[:-2]), atol=atol)
+    return torch.allclose(rrt, eye.expand_as(rrt), atol=atol) and torch.allclose(
+        torch.det(R), torch.ones(R.shape[:-2]), atol=atol
+    )
 
 
 def test_rotation_6d_to_matrix_is_orthonormal():

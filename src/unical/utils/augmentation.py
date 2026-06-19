@@ -3,6 +3,7 @@ Data augmentation for paired (RGB image, LiDAR map) inputs.
 
 All operations work on numpy arrays and are device-independent.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -14,9 +15,10 @@ import numpy as np
 # Photometric distortion
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class PhotometricConfig:
-    brightness: float = 0.1255          # delta ratio
+    brightness: float = 0.1255  # delta ratio
     contrast: tuple[float, float] = (0.5, 1.5)
     saturation: tuple[float, float] = (0.80, 1.2)
     hue: float = 18.0
@@ -49,7 +51,9 @@ class PhotometricDistortion:
         img = cv2.cvtColor(img.astype(np.uint8), cv2.COLOR_HSV2RGB)
 
         if not start_contrast:
-            img = np.clip(img.astype(np.float32) * np.random.uniform(*c.contrast), 0, 255).astype(np.uint8)
+            img = np.clip(img.astype(np.float32) * np.random.uniform(*c.contrast), 0, 255).astype(
+                np.uint8
+            )
 
         return img.astype(np.uint8)
 
@@ -58,9 +62,10 @@ class PhotometricDistortion:
 # Point-cloud distortion
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class PointCloudConfig:
-    dropout_ratio: float = 0.1          # fraction of points that may be removed
+    dropout_ratio: float = 0.1  # fraction of points that may be removed
 
 
 class PointCloudDistortion:
@@ -83,12 +88,13 @@ class PointCloudDistortion:
 # Spatial distortion (applied jointly to RGB + lidar map)
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class SpatialConfig:
     x_mirror: bool = False
-    rotate: float = 0.0                 # degrees; 0 disables
-    translate_dw: float = 0.0           # fraction of width
-    translate_dh: float = 0.0           # fraction of height
+    rotate: float = 0.0  # degrees; 0 disables
+    translate_dw: float = 0.0  # fraction of width
+    translate_dh: float = 0.0  # fraction of height
     zoom_out_prob: float = 0.0
     zoom_out_max: float = 2.0
     zoom_out_aspect: tuple[float, float] = (1.0, 1.0)
@@ -111,7 +117,7 @@ class SpatialDistortion:
         c = self.cfg
 
         if c.x_mirror and np.random.randint(2):
-            rgb   = rgb[:, ::-1].copy()
+            rgb = rgb[:, ::-1].copy()
             lidar = lidar[:, ::-1].copy()
 
         if c.crop_box_prob > 0 and np.random.rand() < c.crop_box_prob:
@@ -125,7 +131,7 @@ class SpatialDistortion:
             center = tuple(np.array(rgb.shape[1::-1]) / 2)
             M = cv2.getRotationMatrix2D(center, angle, 1.0)
             H, W = rgb.shape[:2]
-            rgb   = cv2.warpAffine(rgb,   M, (W, H), flags=cv2.INTER_LINEAR)
+            rgb = cv2.warpAffine(rgb, M, (W, H), flags=cv2.INTER_LINEAR)
             lidar = cv2.warpAffine(lidar, M, (W, H), flags=cv2.INTER_NEAREST)
             if rgb.ndim == 2:
                 rgb = rgb[:, :, np.newaxis]
@@ -176,18 +182,18 @@ class SpatialDistortion:
         new_H = min(H, int(new_W / (W / H * aspect)))
         new_W = min(W, new_W)
 
-        small_rgb   = cv2.resize(rgb,   (new_W, new_H))
+        small_rgb = cv2.resize(rgb, (new_W, new_H))
         small_lidar = cv2.resize(lidar, (new_W, new_H), interpolation=cv2.INTER_NEAREST)
         if small_rgb.ndim == 2:
             small_rgb = small_rgb[:, :, np.newaxis]
         if small_lidar.ndim == 2:
             small_lidar = small_lidar[:, :, np.newaxis]
 
-        canvas_rgb   = np.full((H, W, rgb.shape[2]),   127, dtype=rgb.dtype)
+        canvas_rgb = np.full((H, W, rgb.shape[2]), 127, dtype=rgb.dtype)
         canvas_lidar = np.zeros((H, W, lidar.shape[2]), dtype=lidar.dtype)
         top, left = (H - new_H) // 2, (W - new_W) // 2
-        canvas_rgb[top:top + new_H, left:left + new_W]   = small_rgb
-        canvas_lidar[top:top + new_H, left:left + new_W] = small_lidar
+        canvas_rgb[top : top + new_H, left : left + new_W] = small_rgb
+        canvas_lidar[top : top + new_H, left : left + new_W] = small_lidar
         return canvas_rgb, canvas_lidar
 
     def _zoom_in(self, rgb: np.ndarray, lidar: np.ndarray):
@@ -203,9 +209,9 @@ class SpatialDistortion:
         x1 = min(W, int(cx + rm))
         if x1 <= x0 or y1 <= y0:
             return rgb, lidar
-        crop_rgb   = rgb[y0:y1, x0:x1]
+        crop_rgb = rgb[y0:y1, x0:x1]
         crop_lidar = lidar[y0:y1, x0:x1]
-        out_rgb   = cv2.resize(crop_rgb,   (W, H))
+        out_rgb = cv2.resize(crop_rgb, (W, H))
         out_lidar = cv2.resize(crop_lidar, (W, H), interpolation=cv2.INTER_NEAREST)
         if out_rgb.ndim == 2:
             out_rgb = out_rgb[:, :, np.newaxis]
@@ -218,11 +224,12 @@ class SpatialDistortion:
 # Composite augmentor
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class AugmentationConfig:
     photometric: PhotometricConfig | None = None
-    point_cloud: PointCloudConfig | None  = None
-    spatial:     SpatialConfig | None     = None
+    point_cloud: PointCloudConfig | None = None
+    spatial: SpatialConfig | None = None
 
 
 class Augmentor:
@@ -230,5 +237,5 @@ class Augmentor:
 
     def __init__(self, cfg: AugmentationConfig = AugmentationConfig()) -> None:
         self.photo = PhotometricDistortion(cfg.photometric) if cfg.photometric else None
-        self.pcl   = PointCloudDistortion(cfg.point_cloud) if cfg.point_cloud else None
-        self.spatial = SpatialDistortion(cfg.spatial)       if cfg.spatial    else None
+        self.pcl = PointCloudDistortion(cfg.point_cloud) if cfg.point_cloud else None
+        self.spatial = SpatialDistortion(cfg.spatial) if cfg.spatial else None

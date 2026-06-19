@@ -4,6 +4,7 @@ UniCal Lightning module — camera-LiDAR extrinsic calibration.
 The module wires backbone + head + combined loss and handles
 all Lightning hooks (train / val / test steps, metric logging).
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -33,23 +34,23 @@ class UniCal(L.LightningModule):
 
     def __init__(
         self,
-        backbone:      MobileViTBackbone,
-        head:          SplitRegressionHead,
-        loss:          CombinedLoss,
-        lr:            float = 3e-5,
-        weight_decay:  float = 1e-4,
-        warmup_epochs: int   = 0,
+        backbone: MobileViTBackbone,
+        head: SplitRegressionHead,
+        loss: CombinedLoss,
+        lr: float = 3e-5,
+        weight_decay: float = 1e-4,
+        warmup_epochs: int = 0,
     ) -> None:
         super().__init__()
         self.save_hyperparameters(ignore=["backbone", "head", "loss"])
 
         self.backbone = backbone
-        self.head     = head
-        self.loss_fn  = loss
+        self.head = head
+        self.loss_fn = loss
 
         self._train_metrics = CalibMetrics()
-        self._val_metrics   = CalibMetrics()
-        self._test_metrics  = CalibMetrics()
+        self._val_metrics = CalibMetrics()
+        self._test_metrics = CalibMetrics()
 
     # ------------------------------------------------------------------
     # Forward
@@ -64,22 +65,21 @@ class UniCal(L.LightningModule):
     # Shared step
     # ------------------------------------------------------------------
 
-    def _step(self, batch: Batch) -> tuple[dict[str, torch.Tensor],
-                                           list[Transform], list[Transform]]:
-        pred = self(batch)                           # (trans, rot6d)
-        losses = self.loss_fn(pred, batch)           # dict with "loss", sub-keys
+    def _step(
+        self, batch: Batch
+    ) -> tuple[dict[str, torch.Tensor], list[Transform], list[Transform]]:
+        pred = self(batch)  # (trans, rot6d)
+        losses = self.loss_fn(pred, batch)  # dict with "loss", sub-keys
 
         B = pred[0].shape[0]
         # .float() before .numpy(): under bf16 AMP the predictions are bfloat16,
         # which numpy cannot represent.
         pred_t = pred[0].detach().float().cpu().numpy()
         pred_R = rotation_6d_to_matrix(pred[1]).detach().float().cpu().numpy()
-        tgt_t  = batch.target_reg[0].detach().float().cpu().numpy()
-        tgt_R  = batch.target_reg[1].detach().float().cpu().numpy()
-        pred_Ts   = [Transform.from_rotation_translation(pred_R[i], pred_t[i])
-                     for i in range(B)]
-        target_Ts = [Transform.from_rotation_translation(tgt_R[i], tgt_t[i])
-                     for i in range(B)]
+        tgt_t = batch.target_reg[0].detach().float().cpu().numpy()
+        tgt_R = batch.target_reg[1].detach().float().cpu().numpy()
+        pred_Ts = [Transform.from_rotation_translation(pred_R[i], pred_t[i]) for i in range(B)]
+        target_Ts = [Transform.from_rotation_translation(tgt_R[i], tgt_t[i]) for i in range(B)]
         return losses, pred_Ts, target_Ts
 
     # ------------------------------------------------------------------
@@ -89,8 +89,14 @@ class UniCal(L.LightningModule):
     def training_step(self, batch: Batch, batch_idx: int) -> torch.Tensor:
         losses, pred_Ts, target_Ts = self._step(batch)
         B = batch.img.shape[0]
-        self.log_dict({f"train/{k}": v for k, v in losses.items()},
-                      on_step=True, on_epoch=False, prog_bar=False, sync_dist=True, batch_size=B)
+        self.log_dict(
+            {f"train/{k}": v for k, v in losses.items()},
+            on_step=True,
+            on_epoch=False,
+            prog_bar=False,
+            sync_dist=True,
+            batch_size=B,
+        )
         return losses["loss"]
 
     def on_train_epoch_end(self) -> None:
@@ -103,8 +109,13 @@ class UniCal(L.LightningModule):
     def validation_step(self, batch: Batch, batch_idx: int) -> None:
         losses, pred_Ts, target_Ts = self._step(batch)
         B = batch.img.shape[0]
-        self.log_dict({f"val/{k}": v for k, v in losses.items()},
-                      on_step=False, on_epoch=True, sync_dist=True, batch_size=B)
+        self.log_dict(
+            {f"val/{k}": v for k, v in losses.items()},
+            on_step=False,
+            on_epoch=True,
+            sync_dist=True,
+            batch_size=B,
+        )
         for p, t in zip(pred_Ts, target_Ts):
             self._val_metrics.add(p, t)
 
@@ -120,8 +131,13 @@ class UniCal(L.LightningModule):
     def test_step(self, batch: Batch, batch_idx: int) -> None:
         losses, pred_Ts, target_Ts = self._step(batch)
         B = batch.img.shape[0]
-        self.log_dict({f"test/{k}": v for k, v in losses.items()},
-                      on_step=False, on_epoch=True, sync_dist=True, batch_size=B)
+        self.log_dict(
+            {f"test/{k}": v for k, v in losses.items()},
+            on_step=False,
+            on_epoch=True,
+            sync_dist=True,
+            batch_size=B,
+        )
         for p, t in zip(pred_Ts, target_Ts):
             self._test_metrics.add(p, t)
 
@@ -149,10 +165,8 @@ class UniCal(L.LightningModule):
             warmup_sched = torch.optim.lr_scheduler.LinearLR(
                 opt, start_factor=1e-2, total_iters=warmup
             )
-            scheduler: torch.optim.lr_scheduler.LRScheduler = (
-                torch.optim.lr_scheduler.SequentialLR(
-                    opt, schedulers=[warmup_sched, cosine], milestones=[warmup]
-                )
+            scheduler: torch.optim.lr_scheduler.LRScheduler = torch.optim.lr_scheduler.SequentialLR(
+                opt, schedulers=[warmup_sched, cosine], milestones=[warmup]
             )
         else:
             scheduler = cosine

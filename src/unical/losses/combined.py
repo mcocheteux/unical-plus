@@ -1,6 +1,7 @@
 """
 Combined loss that sums regression and spatial terms.
 """
+
 from __future__ import annotations
 
 import torch
@@ -23,15 +24,15 @@ class CombinedLoss(nn.Module):
     def __init__(
         self,
         regression: RegressionLoss,
-        spatial:    SpatialLoss | None = None,
+        spatial: SpatialLoss | None = None,
     ) -> None:
         super().__init__()
         self.regression = regression
-        self.spatial    = spatial
+        self.spatial = spatial
 
     def forward(
         self,
-        pred:  tuple[torch.Tensor, torch.Tensor],
+        pred: tuple[torch.Tensor, torch.Tensor],
         batch: Batch,
     ) -> dict[str, torch.Tensor]:
         losses: dict[str, torch.Tensor] = {}

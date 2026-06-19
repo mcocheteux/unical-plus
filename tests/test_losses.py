@@ -1,4 +1,5 @@
 """Unit tests for the loss functions, incl. the spatial-loss gradient path."""
+
 import numpy as np
 import torch
 
@@ -12,13 +13,15 @@ from unical.utils.transform import Transform, rotation_6d_to_matrix
 def _fake_batch(B: int = 2, N: int = 64) -> Batch:
     trans = torch.randn(B, 3) * 0.05
     R = rotation_6d_to_matrix(torch.randn(B, 6))
-    pcl = torch.randn(B, N, 4).abs() + 1.0          # forward points, intensity > 0
+    pcl = torch.randn(B, N, 4).abs() + 1.0  # forward points, intensity > 0
     metadata = []
     for _ in range(B):
-        T_gt = Transform.from_rotation_translation(np.eye(3, dtype=np.float32),
-                                                   np.zeros(3, dtype=np.float32))
-        T_init = Transform.from_rotation_translation(np.eye(3, dtype=np.float32),
-                                                     np.array([0.01, 0.0, 0.0], np.float32))
+        T_gt = Transform.from_rotation_translation(
+            np.eye(3, dtype=np.float32), np.zeros(3, dtype=np.float32)
+        )
+        T_init = Transform.from_rotation_translation(
+            np.eye(3, dtype=np.float32), np.array([0.01, 0.0, 0.0], np.float32)
+        )
         metadata.append({"T_gt": T_gt, "T_init": T_init})
     return Batch(
         img=torch.zeros(B, 3, 8, 8),

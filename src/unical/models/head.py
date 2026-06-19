@@ -5,6 +5,7 @@ The split design lets the network learn specialised representations for
 the two geometrically different quantities while still sharing early
 feature processing.
 """
+
 from __future__ import annotations
 
 import torch
@@ -42,11 +43,11 @@ class SplitRegressionHead(nn.Module):
 
     def __init__(
         self,
-        in_features:   int,
+        in_features: int,
         common_hidden: list[int],
-        trans_hidden:  list[int],
-        rot_hidden:    list[int],
-        rot_dim:       int = 6,
+        trans_hidden: list[int],
+        rot_hidden: list[int],
+        rot_dim: int = 6,
     ) -> None:
         super().__init__()
 
@@ -54,15 +55,15 @@ class SplitRegressionHead(nn.Module):
         trunk_dims = [in_features] + list(common_hidden)
         if len(trunk_dims) > 1:
             self.trunk = _mlp(trunk_dims, activate_last=False)
-            trunk_out  = trunk_dims[-1]
+            trunk_out = trunk_dims[-1]
         else:
             self.trunk = nn.Identity()
-            trunk_out  = in_features
+            trunk_out = in_features
 
         # Translation branch: LeakyReLU before each linear layer except first
         self.trans_head = _mlp([trunk_out] + list(trans_hidden) + [3], activate_last=True)
         # Rotation branch (continuous 6-D representation by default)
-        self.rot_head   = _mlp([trunk_out] + list(rot_hidden)   + [rot_dim], activate_last=True)
+        self.rot_head = _mlp([trunk_out] + list(rot_hidden) + [rot_dim], activate_last=True)
 
     def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """

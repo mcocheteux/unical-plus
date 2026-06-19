@@ -4,6 +4,7 @@
 
 ### Camera-LiDAR Extrinsic Calibration via Transformer-Based Early Fusion
 
+[![CI](https://github.com/mcocheteux/unical-plus/actions/workflows/ci.yml/badge.svg)](https://github.com/mcocheteux/unical-plus/actions/workflows/ci.yml)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/)
 [![PyTorch](https://img.shields.io/badge/PyTorch-2.2+-ee4c2c.svg)](https://pytorch.org/)
 [![Lightning](https://img.shields.io/badge/Lightning-2.2+-792ee5.svg)](https://lightning.ai/)
