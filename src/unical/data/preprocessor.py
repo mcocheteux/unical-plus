@@ -2,6 +2,7 @@
 Preprocessor: takes a raw RGB image + raw LiDAR scan and produces the
 normalised tensors that the model expects as inputs.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -19,13 +20,13 @@ from unical.utils.geometry import (
 
 @dataclass
 class PreprocessorConfig:
-    width:            int  = 512
-    height:           int  = 512
-    grayscale:        bool = False
-    add_intensity:    bool = False
-    min_depth:        float = 2.0       # metres — filter near points
-    max_depth:        float = 80.0      # metres — filter far  points
-    augmentation:     AugmentationConfig = field(default_factory=AugmentationConfig)
+    width: int = 512
+    height: int = 512
+    grayscale: bool = False
+    add_intensity: bool = False
+    min_depth: float = 2.0  # metres — filter near points
+    max_depth: float = 80.0  # metres — filter far  points
+    augmentation: AugmentationConfig = field(default_factory=AugmentationConfig)
 
 
 class DataPreprocessor:
@@ -47,11 +48,11 @@ class DataPreprocessor:
 
     def __call__(
         self,
-        img:   np.ndarray,   # (H_orig, W_orig, 3) uint8 RGB
-        pcl:   np.ndarray,   # (N, 4) float32 [x, y, z, intensity]
-        T:     np.ndarray,   # (4, 4) LiDAR→camera extrinsic (decalibrated)
-        K:     np.ndarray,   # (3, 3) intrinsic
-        D:     np.ndarray | None = None,  # distortion coefficients
+        img: np.ndarray,  # (H_orig, W_orig, 3) uint8 RGB
+        pcl: np.ndarray,  # (N, 4) float32 [x, y, z, intensity]
+        T: np.ndarray,  # (4, 4) LiDAR→camera extrinsic (decalibrated)
+        K: np.ndarray,  # (3, 3) intrinsic
+        D: np.ndarray | None = None,  # distortion coefficients
     ) -> tuple[np.ndarray, np.ndarray]:
         # 1. Optional undistort
         if D is not None:
@@ -77,17 +78,18 @@ class DataPreprocessor:
             pcl_proj = PointCloudProjector.scale_to_image(pcl_proj, new_hw, orig_hw)
 
         # 6. Distance filter
-        depth_mask = (pcl_proj[:, 2] > self.cfg.min_depth) & \
-                     (pcl_proj[:, 2] < self.cfg.max_depth)
+        depth_mask = (pcl_proj[:, 2] > self.cfg.min_depth) & (pcl_proj[:, 2] < self.cfg.max_depth)
         pcl_proj = pcl_proj[depth_mask]
 
         # 7. Point-cloud augmentation
         if self.aug.pcl is not None:
             # mask to valid image region, augment, then keep all
             valid = (
-                (pcl_proj[:, 0] > 0) & (pcl_proj[:, 0] < self.cfg.width)  &
-                (pcl_proj[:, 1] > 0) & (pcl_proj[:, 1] < self.cfg.height) &
-                (pcl_proj[:, 2] > 0)
+                (pcl_proj[:, 0] > 0)
+                & (pcl_proj[:, 0] < self.cfg.width)
+                & (pcl_proj[:, 1] > 0)
+                & (pcl_proj[:, 1] < self.cfg.height)
+                & (pcl_proj[:, 2] > 0)
             )
             pcl_proj[valid] = self.aug.pcl(pcl_proj[valid])
 
@@ -101,8 +103,11 @@ class DataPreprocessor:
             img, lidar_map = self.aug.spatial(img, lidar_map)
 
         # 10. Normalise
-        img       = (imagenet_normalize(img) if not self.cfg.grayscale
-                     else min_max_normalize(img, axis=(0, 1))).astype(np.float32)
+        img = (
+            imagenet_normalize(img)
+            if not self.cfg.grayscale
+            else min_max_normalize(img, axis=(0, 1))
+        ).astype(np.float32)
         lidar_map = min_max_normalize(lidar_map, axis=(0, 1)).astype(np.float32)
 
         return img, lidar_map

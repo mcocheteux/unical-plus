@@ -1,4 +1,5 @@
 """Unit tests for point-cloud projection and normalisation utilities."""
+
 from __future__ import annotations
 
 import numpy as np
@@ -14,11 +15,10 @@ from unical.utils.geometry import (
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _K() -> np.ndarray:
     """Pinhole camera: focal=100, principal=(50, 50)."""
-    return np.array([[100., 0., 50.],
-                     [0., 100., 50.],
-                     [0.,   0.,  1.]], dtype=np.float64)
+    return np.array([[100.0, 0.0, 50.0], [0.0, 100.0, 50.0], [0.0, 0.0, 1.0]], dtype=np.float64)
 
 
 def _I4() -> np.ndarray:
@@ -29,9 +29,10 @@ def _I4() -> np.ndarray:
 # PointCloudProjector.project
 # ---------------------------------------------------------------------------
 
+
 def test_project_output_shape() -> None:
     pcl = np.random.default_rng(0).random((50, 4)).astype(np.float32)
-    pcl[:, 2] = np.abs(pcl[:, 2]) + 1.0   # all points in front of camera
+    pcl[:, 2] = np.abs(pcl[:, 2]) + 1.0  # all points in front of camera
     out = PointCloudProjector.project(pcl, _K(), _I4())
     assert out.shape == (50, 4)
 
@@ -63,9 +64,7 @@ def test_project_extra_columns_preserved() -> None:
 
 def test_project_depth_scales_with_distance() -> None:
     """Closer points should have smaller depth values."""
-    pcl = np.array([[0.0, 0.0, 2.0, 1.0],
-                    [0.0, 0.0, 5.0, 1.0],
-                    [0.0, 0.0, 10.0, 1.0]])
+    pcl = np.array([[0.0, 0.0, 2.0, 1.0], [0.0, 0.0, 5.0, 1.0], [0.0, 0.0, 10.0, 1.0]])
     out = PointCloudProjector.project(pcl, _K(), _I4())
     assert out[0, 2] < out[1, 2] < out[2, 2]
 
@@ -73,6 +72,7 @@ def test_project_depth_scales_with_distance() -> None:
 # ---------------------------------------------------------------------------
 # PointCloudProjector.to_2d_map
 # ---------------------------------------------------------------------------
+
 
 def test_to_2d_map_empty_cloud_returns_zeros() -> None:
     pcl = np.zeros((0, 3), dtype=np.float32)
@@ -83,7 +83,7 @@ def test_to_2d_map_empty_cloud_returns_zeros() -> None:
 
 def test_to_2d_map_single_point_inverse_depth() -> None:
     """A point at depth=5 should write 1/5 = 0.2 into the correct pixel."""
-    pcl = np.array([[10.0, 10.0, 5.0]])   # u=10, v=10, depth=5
+    pcl = np.array([[10.0, 10.0, 5.0]])  # u=10, v=10, depth=5
     out = PointCloudProjector.to_2d_map(pcl, (64, 64))
     assert out.shape == (64, 64, 1)
     assert abs(out[10, 10, 0] - 0.2) < 1e-5
@@ -98,9 +98,13 @@ def test_to_2d_map_intensity_channel() -> None:
 
 
 def test_to_2d_map_out_of_bounds_ignored() -> None:
-    pcl = np.array([[-1.0, 10.0, 5.0],    # u < 0
-                    [10.0, -1.0, 5.0],    # v < 0
-                    [65.0, 10.0, 5.0]])   # u >= W
+    pcl = np.array(
+        [
+            [-1.0, 10.0, 5.0],  # u < 0
+            [10.0, -1.0, 5.0],  # v < 0
+            [65.0, 10.0, 5.0],
+        ]
+    )  # u >= W
     out = PointCloudProjector.to_2d_map(pcl, (64, 64))
     assert out.sum() == 0.0
 
@@ -108,15 +112,16 @@ def test_to_2d_map_out_of_bounds_ignored() -> None:
 def test_to_2d_map_inverse_depth_monotone() -> None:
     """Closer points (smaller depth) must produce larger inverse-depth values."""
     near = np.array([[32.0, 32.0, 2.0]])
-    far  = np.array([[32.0, 32.0, 10.0]])
+    far = np.array([[32.0, 32.0, 10.0]])
     out_near = PointCloudProjector.to_2d_map(near, (64, 64))
-    out_far  = PointCloudProjector.to_2d_map(far,  (64, 64))
+    out_far = PointCloudProjector.to_2d_map(far, (64, 64))
     assert out_near[32, 32, 0] > out_far[32, 32, 0]
 
 
 # ---------------------------------------------------------------------------
 # Normalisation helpers
 # ---------------------------------------------------------------------------
+
 
 def test_min_max_normalize_range() -> None:
     arr = np.array([2.0, 4.0, 6.0, 8.0])

@@ -6,6 +6,7 @@ Euler angles, quaternions, and rotation matrices.  All heavy lifting stays in
 numpy so the class can live safely in dataset workers and metadata dicts without
 touching any specific device.
 """
+
 from __future__ import annotations
 
 import math
@@ -18,14 +19,30 @@ import torch
 # ---------------------------------------------------------------------------
 _NEXT_AXIS = [1, 2, 0, 1]
 _AXES2TUPLE: dict[str, tuple[int, int, int, int]] = {
-    "sxyz": (0, 0, 0, 0), "sxyx": (0, 0, 1, 0), "sxzy": (0, 1, 0, 0),
-    "sxzx": (0, 1, 1, 0), "syzx": (1, 0, 0, 0), "syzy": (1, 0, 1, 0),
-    "syxz": (1, 1, 0, 0), "syxy": (1, 1, 1, 0), "szxy": (2, 0, 0, 0),
-    "szxz": (2, 0, 1, 0), "szyx": (2, 1, 0, 0), "szyz": (2, 1, 1, 0),
-    "rzyx": (0, 0, 0, 1), "rxyx": (0, 0, 1, 1), "ryzx": (0, 1, 0, 1),
-    "rxzx": (0, 1, 1, 1), "rxzy": (1, 0, 0, 1), "ryzy": (1, 0, 1, 1),
-    "rzxy": (1, 1, 0, 1), "ryxy": (1, 1, 1, 1), "ryxz": (2, 0, 0, 1),
-    "rzxz": (2, 0, 1, 1), "rxyz": (2, 1, 0, 1), "rzyz": (2, 1, 1, 1),
+    "sxyz": (0, 0, 0, 0),
+    "sxyx": (0, 0, 1, 0),
+    "sxzy": (0, 1, 0, 0),
+    "sxzx": (0, 1, 1, 0),
+    "syzx": (1, 0, 0, 0),
+    "syzy": (1, 0, 1, 0),
+    "syxz": (1, 1, 0, 0),
+    "syxy": (1, 1, 1, 0),
+    "szxy": (2, 0, 0, 0),
+    "szxz": (2, 0, 1, 0),
+    "szyx": (2, 1, 0, 0),
+    "szyz": (2, 1, 1, 0),
+    "rzyx": (0, 0, 0, 1),
+    "rxyx": (0, 0, 1, 1),
+    "ryzx": (0, 1, 0, 1),
+    "rxzx": (0, 1, 1, 1),
+    "rxzy": (1, 0, 0, 1),
+    "ryzy": (1, 0, 1, 1),
+    "rzxy": (1, 1, 0, 1),
+    "ryxy": (1, 1, 1, 1),
+    "ryxz": (2, 0, 0, 1),
+    "rzxz": (2, 0, 1, 1),
+    "rxyz": (2, 1, 0, 1),
+    "rzyz": (2, 1, 1, 1),
 }
 _EPS = np.finfo(float).eps * 4.0
 
@@ -33,6 +50,7 @@ _EPS = np.finfo(float).eps * 4.0
 # ---------------------------------------------------------------------------
 # Low-level rotation helpers (numpy)
 # ---------------------------------------------------------------------------
+
 
 def euler_to_matrix_np(ai: float, aj: float, ak: float, axes: str = "sxyz") -> np.ndarray:
     """Return 4x4 homogeneous rotation matrix from Euler angles."""
@@ -112,12 +130,18 @@ def matrix_to_quaternion_np(T: np.ndarray) -> np.ndarray:
     m00, m01, m02 = M[0, 0], M[0, 1], M[0, 2]
     m10, m11, m12 = M[1, 0], M[1, 1], M[1, 2]
     m20, m21, m22 = M[2, 0], M[2, 1], M[2, 2]
-    K = np.array([
-        [m00 - m11 - m22, m01 + m10,       m02 + m20,       m21 - m12],
-        [m01 + m10,       m11 - m00 - m22, m12 + m21,       m02 - m20],
-        [m02 + m20,       m12 + m21,       m22 - m00 - m11, m10 - m01],
-        [m21 - m12,       m02 - m20,       m10 - m01,       m00 + m11 + m22],
-    ], dtype=np.float64) / 3.0
+    K = (
+        np.array(
+            [
+                [m00 - m11 - m22, m01 + m10, m02 + m20, m21 - m12],
+                [m01 + m10, m11 - m00 - m22, m12 + m21, m02 - m20],
+                [m02 + m20, m12 + m21, m22 - m00 - m11, m10 - m01],
+                [m21 - m12, m02 - m20, m10 - m01, m00 + m11 + m22],
+            ],
+            dtype=np.float64,
+        )
+        / 3.0
+    )
     w, V = np.linalg.eigh(K)
     q = V[[3, 0, 1, 2], np.argmax(w)]
     if q[0] < 0.0:
@@ -133,17 +157,20 @@ def quaternion_to_matrix_np(q: np.ndarray) -> np.ndarray:
         return np.eye(4)
     q *= math.sqrt(2.0 / n)
     q = np.outer(q, q)
-    return np.array([
-        [1.0 - q[2, 2] - q[3, 3], q[1, 2] - q[3, 0], q[1, 3] + q[2, 0], 0.0],
-        [q[1, 2] + q[3, 0], 1.0 - q[1, 1] - q[3, 3], q[2, 3] - q[1, 0], 0.0],
-        [q[1, 3] - q[2, 0], q[2, 3] + q[1, 0], 1.0 - q[1, 1] - q[2, 2], 0.0],
-        [0.0, 0.0, 0.0, 1.0],
-    ])
+    return np.array(
+        [
+            [1.0 - q[2, 2] - q[3, 3], q[1, 2] - q[3, 0], q[1, 3] + q[2, 0], 0.0],
+            [q[1, 2] + q[3, 0], 1.0 - q[1, 1] - q[3, 3], q[2, 3] - q[1, 0], 0.0],
+            [q[1, 3] - q[2, 0], q[2, 3] + q[1, 0], 1.0 - q[1, 1] - q[2, 2], 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ]
+    )
 
 
 # ---------------------------------------------------------------------------
 # Differentiable (PyTorch) helpers — used inside the loss / training graph
 # ---------------------------------------------------------------------------
+
 
 def _axis_angle_rotation(axis: str, angle: torch.Tensor) -> torch.Tensor:
     cos = torch.cos(angle)
@@ -169,10 +196,7 @@ def euler_to_rotation_matrix(euler: torch.Tensor, convention: str = "XYZ") -> to
         euler: (..., 3) radians
         convention: 3-char string like "XYZ"
     """
-    matrices = [
-        _axis_angle_rotation(c, e)
-        for c, e in zip(convention, torch.unbind(euler, -1))
-    ]
+    matrices = [_axis_angle_rotation(c, e) for c, e in zip(convention, torch.unbind(euler, -1))]
     return torch.matmul(torch.matmul(matrices[0], matrices[1]), matrices[2])
 
 
@@ -181,7 +205,7 @@ def euler_to_transform_matrix(trans: torch.Tensor, rot: torch.Tensor) -> torch.T
     Build a 4x4 homogeneous transform from translation (3,) and Euler angles (3,).
     Stays on the device of the inputs.
     """
-    R = euler_to_rotation_matrix(rot)      # (3, 3)
+    R = euler_to_rotation_matrix(rot)  # (3, 3)
     device, dtype = trans.device, trans.dtype
     T = torch.zeros(4, 4, device=device, dtype=dtype)
     T[:3, :3] = R
@@ -241,6 +265,7 @@ def build_transform_matrix(trans: torch.Tensor, rot_matrix: torch.Tensor) -> tor
 # Transform class
 # ---------------------------------------------------------------------------
 
+
 class Transform:
     """
     Rigid-body transform backed by a numpy 4×4 homogeneous matrix.
@@ -265,14 +290,16 @@ class Transform:
     @classmethod
     def from_rotation_translation(cls, R: np.ndarray, t: np.ndarray) -> Transform:
         assert R.shape == (3, 3), f"Expected (3,3), got {R.shape}"
-        assert t.shape == (3,),   f"Expected (3,), got {t.shape}"
+        assert t.shape == (3,), f"Expected (3,), got {t.shape}"
         T = np.eye(4, dtype=np.float32)
         T[:3, :3] = R
         T[:3, 3] = t
         return cls(T)
 
     @classmethod
-    def from_euler(cls, trans: torch.Tensor | np.ndarray, rot: torch.Tensor | np.ndarray) -> Transform:
+    def from_euler(
+        cls, trans: torch.Tensor | np.ndarray, rot: torch.Tensor | np.ndarray
+    ) -> Transform:
         """Create from translation (3,) and Euler angles (3,) — supports tensors on any device."""
         if isinstance(trans, torch.Tensor):
             trans_np = trans.detach().cpu().float().numpy().squeeze()

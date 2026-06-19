@@ -1,6 +1,7 @@
 """
 Lightning DataModule wrapping the KITTI dataset.
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -28,17 +29,17 @@ class KittiDataModule(L.LightningDataModule):
 
     def __init__(
         self,
-        data_dir:     str,
-        splits:       dict[str, Any],
+        data_dir: str,
+        splits: dict[str, Any],
         preprocessor: Any,
         decalibrator: Any,
-        batch_size:   int  = 8,
-        num_workers:  int  = 4,
-        pin_memory:   bool = True,
+        batch_size: int = 8,
+        num_workers: int = 4,
+        pin_memory: bool = True,
     ) -> None:
         super().__init__()
         self.save_hyperparameters(ignore=["preprocessor", "decalibrator", "splits"])
-        self._splits       = splits
+        self._splits = splits
         self._preprocessor = preprocessor
         self._decalibrator = decalibrator
 
@@ -49,25 +50,26 @@ class KittiDataModule(L.LightningDataModule):
             # val/test use deterministic (seeded-per-index) decalibrations so their
             # metrics are stable and reproducible across epochs and runs.
             return KittiDataset(
-                data_dir      = self.hparams.data_dir,
-                split         = self._splits[key],
-                preprocessor  = self._preprocessor,
-                decalibrator  = self._decalibrator,
-                deterministic = key != "train",
+                data_dir=self.hparams.data_dir,
+                split=self._splits[key],
+                preprocessor=self._preprocessor,
+                decalibrator=self._decalibrator,
+                deterministic=key != "train",
             )
+
         self.train_ds = _make("train")
-        self.val_ds   = _make("val")
-        self.test_ds  = _make("test")
+        self.val_ds = _make("val")
+        self.test_ds = _make("test")
 
     def _loader(self, ds: KittiDataset, shuffle: bool) -> DataLoader:
         return DataLoader(
             ds,
-            batch_size  = self.hparams.batch_size,
-            num_workers = self.hparams.num_workers,
-            pin_memory  = self.hparams.pin_memory,
-            shuffle     = shuffle,
-            collate_fn  = KittiDataset.collate,
-            persistent_workers = self.hparams.num_workers > 0,
+            batch_size=self.hparams.batch_size,
+            num_workers=self.hparams.num_workers,
+            pin_memory=self.hparams.pin_memory,
+            shuffle=shuffle,
+            collate_fn=KittiDataset.collate,
+            persistent_workers=self.hparams.num_workers > 0,
         )
 
     def train_dataloader(self) -> DataLoader:

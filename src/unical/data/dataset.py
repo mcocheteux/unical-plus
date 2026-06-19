@@ -4,6 +4,7 @@ KITTI raw dataset for camera-LiDAR calibration.
 Each sample is a (image, lidar_map) pair with a random decalibration applied
 to the LiDAR projection.  The model must predict that decalibration error.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -22,6 +23,7 @@ from unical.utils.transform import Transform
 # Batch type
 # ---------------------------------------------------------------------------
 
+
 class Batch(NamedTuple):
     """
     Inputs fed to UniCal.
@@ -32,18 +34,19 @@ class Batch(NamedTuple):
     pcl:        (B, N, 4)          — raw padded LiDAR scan (for spatial loss)
     metadata:   list of per-sample dicts
     """
-    img:        torch.Tensor
-    lidar_map:  torch.Tensor
+
+    img: torch.Tensor
+    lidar_map: torch.Tensor
     target_reg: tuple[torch.Tensor, torch.Tensor]
-    pcl:        torch.Tensor
-    metadata:   list[dict[str, Any]]
+    pcl: torch.Tensor
+    metadata: list[dict[str, Any]]
 
 
 # ---------------------------------------------------------------------------
 # Dataset
 # ---------------------------------------------------------------------------
 
-Split = list[tuple[str, list[int]]]   # [("2011_09_26", [1, 2, ...]), ...]
+Split = list[tuple[str, list[int]]]  # [("2011_09_26", [1, 2, ...]), ...]
 
 
 class KittiDataset(Dataset):
@@ -67,7 +70,7 @@ class KittiDataset(Dataset):
         deterministic: bool = False,
         seed: int = 0,
     ) -> None:
-        self.data_dir     = Path(data_dir)
+        self.data_dir = Path(data_dir)
         self.preprocessor = preprocessor
         self.decalibrator = decalibrator
         self.deterministic = deterministic
@@ -88,9 +91,11 @@ class KittiDataset(Dataset):
             self._date_meta[date] = self._read_calibration(date_dir)
             for drive in drives:
                 drive_dir = date_dir / f"{date}_drive_{drive:04d}_sync"
-                img_dir   = drive_dir / "image_02" / "data"
+                img_dir = drive_dir / "image_02" / "data"
                 lidar_dir = drive_dir / "velodyne_points" / "data"
-                for img_path in sorted(p for p in img_dir.glob("*.png") if not p.name.startswith(".")):
+                for img_path in sorted(
+                    p for p in img_dir.glob("*.png") if not p.name.startswith(".")
+                ):
                     fid = int(img_path.stem)
                     lid_path = lidar_dir / f"{fid:010d}.bin"
                     if lid_path.exists():
@@ -129,20 +134,28 @@ class KittiDataset(Dataset):
     def __getitem__(self, idx: int) -> dict:
         date, drive, fid = self._samples[idx]
         meta = self._date_meta[date]
-        K    = meta["K"]
-        T_gt = meta["T_gt"]   # ground-truth LiDAR→cam
+        K = meta["K"]
+        T_gt = meta["T_gt"]  # ground-truth LiDAR→cam
 
         img_path = (
-            self.data_dir / date / f"{date}_drive_{drive:04d}_sync"
-            / "image_02" / "data" / f"{fid:010d}.png"
+            self.data_dir
+            / date
+            / f"{date}_drive_{drive:04d}_sync"
+            / "image_02"
+            / "data"
+            / f"{fid:010d}.png"
         )
         lidar_path = (
-            self.data_dir / date / f"{date}_drive_{drive:04d}_sync"
-            / "velodyne_points" / "data" / f"{fid:010d}.bin"
+            self.data_dir
+            / date
+            / f"{date}_drive_{drive:04d}_sync"
+            / "velodyne_points"
+            / "data"
+            / f"{fid:010d}.bin"
         )
 
-        img      = load_image_rgb(str(img_path))
-        raw_pcl  = np.fromfile(str(lidar_path), dtype=np.float32).reshape(-1, 4)
+        img = load_image_rgb(str(img_path))
+        raw_pcl = np.fromfile(str(lidar_path), dtype=np.float32).reshape(-1, 4)
 
         # Sample a decalibration error. For val/test (deterministic=True) seed it
         # per sample index so the decalibration — and thus the metric — is stable.
@@ -150,30 +163,28 @@ class KittiDataset(Dataset):
             gen = torch.Generator().manual_seed(self.seed * 1_000_003 + idx)
             T_decal = self.decalibrator(generator=gen)
         else:
-            T_decal = self.decalibrator()       # Transform
-        T_init    = T_decal @ T_gt             # decalibrated extrinsic
+            T_decal = self.decalibrator()  # Transform
+        T_init = T_decal @ T_gt  # decalibrated extrinsic
 
         # Preprocess image + project lidar with decalibrated extrinsic
-        img_pp, lidar_map = self.preprocessor(
-            img.copy(), raw_pcl.copy(), T_init.matrix, K.copy()
-        )
+        img_pp, lidar_map = self.preprocessor(img.copy(), raw_pcl.copy(), T_init.matrix, K.copy())
 
         # Regression target: the decalibration we want to predict, as a translation
         # vector + rotation matrix (matrix target avoids Euler-convention ambiguity).
-        t_target = T_decal.translation                 # numpy (3,)
-        R_target = T_decal.rotation_matrix             # numpy (3, 3)
+        t_target = T_decal.translation  # numpy (3,)
+        R_target = T_decal.rotation_matrix  # numpy (3, 3)
 
         return {
-            "img":       torch.from_numpy(img_pp).permute(2, 0, 1),    # (C, H, W)
-            "lidar_map": torch.from_numpy(lidar_map).permute(2, 0, 1), # (C, H, W)
-            "trans":     torch.from_numpy(t_target),                    # (3,)
-            "rot_mat":   torch.from_numpy(R_target),                    # (3, 3)
-            "pcl":       torch.from_numpy(raw_pcl),                     # (N, 4)
+            "img": torch.from_numpy(img_pp).permute(2, 0, 1),  # (C, H, W)
+            "lidar_map": torch.from_numpy(lidar_map).permute(2, 0, 1),  # (C, H, W)
+            "trans": torch.from_numpy(t_target),  # (3,)
+            "rot_mat": torch.from_numpy(R_target),  # (3, 3)
+            "pcl": torch.from_numpy(raw_pcl),  # (N, 4)
             "metadata": {
-                "T_gt":    T_gt,      # Transform (numpy) — ground truth
-                "T_init":  T_init,    # Transform (numpy) — decalibrated
-                "T_decal": T_decal,   # Transform (numpy) — target
-                "K":       K,
+                "T_gt": T_gt,  # Transform (numpy) — ground truth
+                "T_init": T_init,  # Transform (numpy) — decalibrated
+                "T_decal": T_decal,  # Transform (numpy) — target
+                "K": K,
                 "img_name": f"{fid:010d}",
             },
         }
@@ -184,14 +195,12 @@ class KittiDataset(Dataset):
 
     @staticmethod
     def collate(samples: list[dict]) -> Batch:
-        img       = torch.stack([s["img"]       for s in samples])
+        img = torch.stack([s["img"] for s in samples])
         lidar_map = torch.stack([s["lidar_map"] for s in samples])
-        trans     = torch.stack([s["trans"]     for s in samples])
-        rot_mat   = torch.stack([s["rot_mat"]   for s in samples])
+        trans = torch.stack([s["trans"] for s in samples])
+        rot_mat = torch.stack([s["rot_mat"] for s in samples])
         # Pad point clouds to the same length (pad value = 0)
-        pcl = torch.nn.utils.rnn.pad_sequence(
-            [s["pcl"] for s in samples], batch_first=True
-        )
+        pcl = torch.nn.utils.rnn.pad_sequence([s["pcl"] for s in samples], batch_first=True)
         metadata = [s["metadata"] for s in samples]
         return Batch(
             img=img,

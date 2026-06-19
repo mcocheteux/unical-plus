@@ -12,6 +12,7 @@ channels, the pretrained 3-channel stem convolution is "inflated" to the
 required channel count: the RGB filters are copied verbatim and each extra
 (LiDAR) channel is initialised from the mean of the pretrained RGB filters.
 """
+
 from __future__ import annotations
 
 import torch
@@ -46,38 +47,40 @@ class MobileViTBackbone(nn.Module):
 
     def __init__(
         self,
-        img_channels:        int = 3,
-        lidar_channels:      int = 1,
-        image_size:          int = 512,
-        hidden_sizes:        list[int] | None = None,
+        img_channels: int = 3,
+        lidar_channels: int = 1,
+        image_size: int = 512,
+        hidden_sizes: list[int] | None = None,
         num_attention_heads: int = 4,
-        patch_size:          int = 2,
-        conv_kernel_size:    int = 3,
-        pretrained:          str | None = "apple/mobilevit-small",
-        spatial_head:        bool = True,
+        patch_size: int = 2,
+        conv_kernel_size: int = 3,
+        pretrained: str | None = "apple/mobilevit-small",
+        spatial_head: bool = True,
     ) -> None:
         super().__init__()
         hidden_sizes = list(hidden_sizes) if hidden_sizes is not None else [144, 192, 240]
-        in_channels  = img_channels + lidar_channels
+        in_channels = img_channels + lidar_channels
 
         if pretrained:
             self.model = MobileViTModel.from_pretrained(pretrained)
             self._inflate_stem(in_channels, img_channels)
         else:
             cfg = MobileViTConfig(
-                num_channels        = in_channels,
-                image_size          = image_size,
-                hidden_sizes        = hidden_sizes,
-                num_attention_heads = num_attention_heads,
-                patch_size          = patch_size,
-                conv_kernel_size    = conv_kernel_size,
+                num_channels=in_channels,
+                image_size=image_size,
+                hidden_sizes=hidden_sizes,
+                num_attention_heads=num_attention_heads,
+                patch_size=patch_size,
+                conv_kernel_size=conv_kernel_size,
             )
             self.model = MobileViTModel(cfg)
 
         feat_dim = self.model.config.neck_hidden_sizes[-1]
         if spatial_head:
             self.spatial_head: nn.Module = nn.Sequential(
-                nn.Conv2d(feat_dim, feat_dim, kernel_size=3, padding=1, groups=feat_dim, bias=False),
+                nn.Conv2d(
+                    feat_dim, feat_dim, kernel_size=3, padding=1, groups=feat_dim, bias=False
+                ),
                 nn.BatchNorm2d(feat_dim),
                 nn.SiLU(inplace=True),
                 nn.Conv2d(feat_dim, feat_dim, kernel_size=1, bias=False),
@@ -94,11 +97,12 @@ class MobileViTBackbone(nn.Module):
         if old.in_channels == in_channels:
             return
         new = nn.Conv2d(
-            in_channels, old.out_channels,
-            kernel_size = old.kernel_size,
-            stride      = old.stride,
-            padding     = old.padding,
-            bias        = old.bias is not None,
+            in_channels,
+            old.out_channels,
+            kernel_size=old.kernel_size,
+            stride=old.stride,
+            padding=old.padding,
+            bias=old.bias is not None,
         )
         with torch.no_grad():
             new.weight[:, :img_channels] = old.weight
@@ -120,6 +124,6 @@ class MobileViTBackbone(nn.Module):
         """
         x = torch.cat([batch.img, batch.lidar_map], dim=1)  # (B, C_img+C_lid, H, W)
         out = self.model(x, return_dict=True)["last_hidden_state"]  # (B, D, H', W')
-        out = self.spatial_head(out)                                 # (B, D, H', W')
-        out = self.pool(out)                                         # (B, D, 1, 1)
-        return rearrange(out, "b c 1 1 -> b c")                     # (B, D)
+        out = self.spatial_head(out)  # (B, D, H', W')
+        out = self.pool(out)  # (B, D, 1, 1)
+        return rearrange(out, "b c 1 1 -> b c")  # (B, D)
