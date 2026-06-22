@@ -8,16 +8,27 @@ batch_size:  8
 num_workers: 4       # reduce to 0 if DataLoader workers crash on macOS
 pin_memory:  false   # MPS does not support pinned memory; harmless to leave false on CUDA
 
+# Window of consecutive frames per sample. sequence_length=1 (default) reproduces
+# the original single-frame behaviour exactly; set >1 to enable temporal fusion
+# (see model.temporal) and multi-frame spatial-loss supervision.
+sequence_length: 1
+frame_stride:    1
+
 # Splits — imported from experiment config (see configs/experiment/)
 splits: ${experiment.splits}
 
-# Decalibrator: samples a random rigid-body perturbation T_decal ~ Uniform(-range, +range)
-# that is applied to the ground-truth extrinsic to create the noisy initial calibration.
-# The model is trained to predict and correct this perturbation.
+# Decalibrator: samples independent LiDAR-side and camera-side rigid-body
+# perturbations T_decal_lidar/T_decal_cam ~ Uniform(-range, +range), composed
+# (conjugated through the ground-truth extrinsic) into the single net
+# decalibration the model is trained to predict. With r_range_cam=t_range_cam=0
+# (default) the camera draw is identity and this degenerates exactly to the
+# original LiDAR-only ErrorGenerator behaviour.
 decalibrator:
-  _target_: unical.data.decalibrator.ErrorGenerator
-  r_range: 1.0      # max rotation error per axis, in degrees  (LCCNet/RegNet regime)
-  t_range: 10.0     # max translation error per axis, in centimetres
+  _target_: unical.data.decalibrator.DualErrorGenerator
+  r_range_lidar: 1.0      # max LiDAR-side rotation error per axis, in degrees (LCCNet/RegNet regime)
+  t_range_lidar: 10.0     # max LiDAR-side translation error per axis, in centimetres
+  r_range_cam:   0.0      # max camera-side rotation error per axis, in degrees
+  t_range_cam:   0.0      # max camera-side translation error per axis, in centimetres
 
 # Preprocessor: resizes image + LiDAR map, applies augmentation, normalises
 preprocessor:

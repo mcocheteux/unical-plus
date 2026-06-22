@@ -14,7 +14,7 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
-from unical.data.decalibrator import ErrorGenerator
+from unical.data.decalibrator import DualErrorGenerator, compose_net_decalibration
 from unical.data.preprocessor import DataPreprocessor
 from unical.utils.geometry import load_image_rgb
 from unical.utils.transform import Transform
@@ -28,18 +28,22 @@ class Batch(NamedTuple):
     """
     Inputs fed to UniCal.
 
-    img:        (B, C_img, H, W)   — normalised camera image
-    lidar_map:  (B, C_lid, H, W)   — normalised sparse depth map
-    target_reg: tuple[(B, 3), (B, 3, 3)] — (translation, rotation_matrix) decal target
-    pcl:        (B, N, 4)          — raw padded LiDAR scan (for spatial loss)
-    metadata:   list of per-sample dicts
+    img:        (B, T, C_img, H, W) — normalised camera image, T = window length
+    lidar_map:  (B, T, C_lid, H, W) — normalised sparse depth map
+    target_reg: tuple[(B, 3), (B, 3, 3)] — (translation, rotation_matrix) decal
+                target; one prediction per *window*, not per frame, since the
+                decalibration is shared across all T frames.
+    pcl:        list of T tensors, each (B, N_max, 4) — raw padded LiDAR scan
+                at that window position (for the spatial loss).
+    metadata:   list of T per-position lists of per-sample dicts (i.e.
+                metadata[t][i] is sample i's metadata for frame t).
     """
 
     img: torch.Tensor
     lidar_map: torch.Tensor
     target_reg: tuple[torch.Tensor, torch.Tensor]
-    pcl: torch.Tensor
-    metadata: list[dict[str, Any]]
+    pcl: list[torch.Tensor]
+    metadata: list[list[dict[str, Any]]]
 
 
 # ---------------------------------------------------------------------------
@@ -54,11 +58,17 @@ class KittiDataset(Dataset):
     KITTI raw dataset loader.
 
     Args:
-        data_dir:     Root of the KITTI raw dataset
-                      (contains date folders like 2011_09_26/).
-        split:        List of (date_str, [drive_ids]) tuples.
-        preprocessor: Preprocessing pipeline.
-        decalibrator: Random decalibration generator.
+        data_dir:        Root of the KITTI raw dataset
+                          (contains date folders like 2011_09_26/).
+        split:            List of (date_str, [drive_ids]) tuples.
+        preprocessor:     Preprocessing pipeline.
+        decalibrator:     Random decalibration generator (camera + LiDAR sides).
+        sequence_length:  Number of consecutive frames per sample. ``1``
+                          (default) reproduces the original single-frame
+                          behaviour exactly — same sample count and order.
+        frame_stride:     Gap between sampled frames within a window.
+        deterministic:    Seed decalibration draws per sample index (val/test).
+        seed:             Base seed for deterministic mode.
     """
 
     def __init__(
@@ -66,17 +76,27 @@ class KittiDataset(Dataset):
         data_dir: str | Path,
         split: Split,
         preprocessor: DataPreprocessor,
-        decalibrator: ErrorGenerator,
+        decalibrator: DualErrorGenerator,
+        sequence_length: int = 1,
+        frame_stride: int = 1,
         deterministic: bool = False,
         seed: int = 0,
     ) -> None:
+        if sequence_length < 1:
+            raise ValueError(f"sequence_length must be >= 1, got {sequence_length}")
+        if frame_stride < 1:
+            raise ValueError(f"frame_stride must be >= 1, got {frame_stride}")
+
         self.data_dir = Path(data_dir)
         self.preprocessor = preprocessor
         self.decalibrator = decalibrator
+        self.sequence_length = sequence_length
+        self.frame_stride = frame_stride
         self.deterministic = deterministic
         self.seed = seed
 
-        self._samples: list[tuple[str, int, int]] = []  # (date, drive, frame_id)
+        # (date, drive, [fid_0, ..., fid_{T-1}]) — a window of T contiguous frames.
+        self._samples: list[tuple[str, int, list[int]]] = []
         self._date_meta: dict[str, dict] = {}
 
         self._parse(split)
@@ -86,6 +106,8 @@ class KittiDataset(Dataset):
     # ------------------------------------------------------------------
 
     def _parse(self, split: Split) -> None:
+        T, stride = self.sequence_length, self.frame_stride
+        span = (T - 1) * stride
         for date, drives in split:
             date_dir = self.data_dir / date
             self._date_meta[date] = self._read_calibration(date_dir)
@@ -93,13 +115,26 @@ class KittiDataset(Dataset):
                 drive_dir = date_dir / f"{date}_drive_{drive:04d}_sync"
                 img_dir = drive_dir / "image_02" / "data"
                 lidar_dir = drive_dir / "velodyne_points" / "data"
+                valid_fids = []
                 for img_path in sorted(
                     p for p in img_dir.glob("*.png") if not p.name.startswith(".")
                 ):
                     fid = int(img_path.stem)
                     lid_path = lidar_dir / f"{fid:010d}.bin"
                     if lid_path.exists():
-                        self._samples.append((date, drive, fid))
+                        valid_fids.append(fid)
+
+                # Emit a window per valid start position; require the window's
+                # frame ids to be exactly contiguous at the given stride (drop
+                # incomplete/gappy windows rather than padding).
+                for i in range(len(valid_fids) - span):
+                    window = valid_fids[i : i + span + 1 : stride]
+                    if len(window) != T:
+                        continue
+                    expected = [window[0] + k * stride for k in range(T)]
+                    if window != expected:
+                        continue
+                    self._samples.append((date, drive, window))
 
     @staticmethod
     def _read_calibration(date_dir: Path) -> dict:
@@ -132,61 +167,68 @@ class KittiDataset(Dataset):
         return len(self._samples)
 
     def __getitem__(self, idx: int) -> dict:
-        date, drive, fid = self._samples[idx]
+        date, drive, fids = self._samples[idx]
         meta = self._date_meta[date]
         K = meta["K"]
         T_gt = meta["T_gt"]  # ground-truth LiDAR→cam
 
-        img_path = (
-            self.data_dir
-            / date
-            / f"{date}_drive_{drive:04d}_sync"
-            / "image_02"
-            / "data"
-            / f"{fid:010d}.png"
-        )
-        lidar_path = (
-            self.data_dir
-            / date
-            / f"{date}_drive_{drive:04d}_sync"
-            / "velodyne_points"
-            / "data"
-            / f"{fid:010d}.bin"
-        )
+        drive_dir = self.data_dir / date / f"{date}_drive_{drive:04d}_sync"
 
-        img = load_image_rgb(str(img_path))
-        raw_pcl = np.fromfile(str(lidar_path), dtype=np.float32).reshape(-1, 4)
-
-        # Sample a decalibration error. For val/test (deterministic=True) seed it
-        # per sample index so the decalibration — and thus the metric — is stable.
+        # One decalibration draw per window, shared by every frame in it —
+        # the physical miscalibration is constant across a short time span.
+        # NOTE: spatial augmentation (crop/flip/zoom in `Augmentor.spatial`)
+        # uses the global numpy RNG rather than an injectable generator, so
+        # it is not guaranteed to be identical across a window's frames if
+        # enabled. Photometric jitter being independent per frame is fine
+        # (realistic per-frame exposure/lighting noise); spatial augmentation
+        # is disabled by default in this repo's configs, so this only matters
+        # if a caller explicitly enables it.
         if self.deterministic:
             gen = torch.Generator().manual_seed(self.seed * 1_000_003 + idx)
-            T_decal = self.decalibrator(generator=gen)
+            T_decal_lidar, T_decal_cam = self.decalibrator(generator=gen)
         else:
-            T_decal = self.decalibrator()  # Transform
-        T_init = T_decal @ T_gt  # decalibrated extrinsic
+            T_decal_lidar, T_decal_cam = self.decalibrator()
+        T_decal = compose_net_decalibration(T_decal_lidar, T_decal_cam, T_gt)
+        T_init = T_decal @ T_gt  # decalibrated extrinsic, shared across the window
 
-        # Preprocess image + project lidar with decalibrated extrinsic
-        img_pp, lidar_map = self.preprocessor(img.copy(), raw_pcl.copy(), T_init.matrix, K.copy())
+        imgs, lidar_maps, pcls, metadatas = [], [], [], []
+        for fid in fids:
+            img_path = drive_dir / "image_02" / "data" / f"{fid:010d}.png"
+            lidar_path = drive_dir / "velodyne_points" / "data" / f"{fid:010d}.bin"
+
+            img = load_image_rgb(str(img_path))
+            raw_pcl = np.fromfile(str(lidar_path), dtype=np.float32).reshape(-1, 4)
+
+            img_pp, lidar_map = self.preprocessor(
+                img.copy(), raw_pcl.copy(), T_init.matrix, K.copy()
+            )
+
+            imgs.append(torch.from_numpy(img_pp).permute(2, 0, 1))  # (C, H, W)
+            lidar_maps.append(torch.from_numpy(lidar_map).permute(2, 0, 1))  # (C, H, W)
+            pcls.append(torch.from_numpy(raw_pcl))  # (N, 4)
+            metadatas.append(
+                {
+                    "T_gt": T_gt,  # Transform — ground truth (same for whole window)
+                    "T_init": T_init,  # Transform — decalibrated (same for whole window)
+                    "T_decal": T_decal,  # Transform — target (same for whole window)
+                    "K": K,
+                    "img_name": f"{fid:010d}",
+                }
+            )
 
         # Regression target: the decalibration we want to predict, as a translation
         # vector + rotation matrix (matrix target avoids Euler-convention ambiguity).
+        # One target per window, not per frame.
         t_target = T_decal.translation  # numpy (3,)
         R_target = T_decal.rotation_matrix  # numpy (3, 3)
 
         return {
-            "img": torch.from_numpy(img_pp).permute(2, 0, 1),  # (C, H, W)
-            "lidar_map": torch.from_numpy(lidar_map).permute(2, 0, 1),  # (C, H, W)
+            "img": torch.stack(imgs),  # (T, C, H, W)
+            "lidar_map": torch.stack(lidar_maps),  # (T, C, H, W)
             "trans": torch.from_numpy(t_target),  # (3,)
             "rot_mat": torch.from_numpy(R_target),  # (3, 3)
-            "pcl": torch.from_numpy(raw_pcl),  # (N, 4)
-            "metadata": {
-                "T_gt": T_gt,  # Transform (numpy) — ground truth
-                "T_init": T_init,  # Transform (numpy) — decalibrated
-                "T_decal": T_decal,  # Transform (numpy) — target
-                "K": K,
-                "img_name": f"{fid:010d}",
-            },
+            "pcl": pcls,  # list of T tensors, each (N, 4)
+            "metadata": metadatas,  # list of T dicts
         }
 
     # ------------------------------------------------------------------
@@ -195,13 +237,17 @@ class KittiDataset(Dataset):
 
     @staticmethod
     def collate(samples: list[dict]) -> Batch:
-        img = torch.stack([s["img"] for s in samples])
-        lidar_map = torch.stack([s["lidar_map"] for s in samples])
+        img = torch.stack([s["img"] for s in samples])  # (B, T, C, H, W)
+        lidar_map = torch.stack([s["lidar_map"] for s in samples])  # (B, T, C, H, W)
         trans = torch.stack([s["trans"] for s in samples])
         rot_mat = torch.stack([s["rot_mat"] for s in samples])
-        # Pad point clouds to the same length (pad value = 0)
-        pcl = torch.nn.utils.rnn.pad_sequence([s["pcl"] for s in samples], batch_first=True)
-        metadata = [s["metadata"] for s in samples]
+        T = len(samples[0]["pcl"])
+        # Pad point clouds to the same length within each window position.
+        pcl = [
+            torch.nn.utils.rnn.pad_sequence([s["pcl"][t] for s in samples], batch_first=True)
+            for t in range(T)
+        ]
+        metadata = [[s["metadata"][t] for s in samples] for t in range(T)]
         return Batch(
             img=img,
             lidar_map=lidar_map,

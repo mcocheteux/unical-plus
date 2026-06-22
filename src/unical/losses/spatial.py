@@ -8,6 +8,12 @@ complementary terms are available:
   centroid_loss — MSE between point-cloud centroids in camera frame
   pcl_loss      — MSE between point-to-point distances (after truncation)
 
+When the batch carries a window of T frames (``batch.pcl``/``batch.metadata``
+are length-T lists), the single shared prediction is checked against every
+frame's geometry and the loss is averaged over T — denser supervision from
+the same decalibration draw, with T=1 reducing exactly to the original
+single-frame loss.
+
 Reference: https://ieeexplore.ieee.org/document/9599702
 """
 
@@ -59,41 +65,51 @@ class SpatialLoss(nn.Module):
         t_inv = -torch.einsum("bij,bj->bi", R_inv, pred_t)  # (B, 3)
         T_fix = build_transform_matrix(t_inv, R_inv)  # (B, 4, 4), differentiable
 
-        pts_gt_list: list[torch.Tensor] = []
-        pts_pred_list: list[torch.Tensor] = []
-        min_pts = float("inf")
+        T = len(batch.pcl)
+        centroid_loss = torch.zeros((), device=device)
+        pcl_loss = torch.zeros((), device=device)
 
-        for i in range(B):
-            # Constant (no-grad) initial / ground-truth extrinsics for this sample.
-            T_init = batch.metadata[i]["T_init"].to_torch(device)  # (4, 4)
-            T_gt_torch = batch.metadata[i]["T_gt"].to_torch(device)  # (4, 4)
-            T_recalib = T_fix[i] @ T_init  # (4, 4), grad via T_fix
+        for t in range(T):
+            pts_gt_list: list[torch.Tensor] = []
+            pts_pred_list: list[torch.Tensor] = []
+            min_pts = float("inf")
 
-            # Raw scan: keep only points with intensity > 0 (filters padding zeros)
-            scan = batch.pcl[i]  # (N_max, 4) on device
-            mask = scan[:, 3] > 0
-            pts = scan[mask, :4].clone()  # (n, 4)
-            pts[:, 3] = 1.0  # homogenise
+            for i in range(B):
+                # Constant (no-grad) initial / ground-truth extrinsics for this
+                # sample at this window position. The predicted decalibration is
+                # shared across all T frames in the window.
+                T_init = batch.metadata[t][i]["T_init"].to_torch(device)  # (4, 4)
+                T_gt_torch = batch.metadata[t][i]["T_gt"].to_torch(device)  # (4, 4)
+                T_recalib = T_fix[i] @ T_init  # (4, 4), grad via T_fix
 
-            # Ground-truth projection: T_gt @ pts
-            pts_gt = (T_gt_torch @ pts.T).T[:, :3].unsqueeze(0)  # (1, n, 3)
+                # Raw scan: keep only points with intensity > 0 (filters padding zeros)
+                scan = batch.pcl[t][i]  # (N_max, 4) on device
+                mask = scan[:, 3] > 0
+                pts = scan[mask, :4].clone()  # (n, 4)
+                pts[:, 3] = 1.0  # homogenise
 
-            # Predicted recalibrated projection
-            pts_rec = (T_recalib @ pts.T).T[:, :3].unsqueeze(0)  # (1, n, 3)
+                # Ground-truth projection: T_gt @ pts
+                pts_gt = (T_gt_torch @ pts.T).T[:, :3].unsqueeze(0)  # (1, n, 3)
 
-            min_pts = min(min_pts, pts.shape[0])
-            pts_gt_list.append(pts_gt)
-            pts_pred_list.append(pts_rec)
+                # Predicted recalibrated projection
+                pts_rec = (T_recalib @ pts.T).T[:, :3].unsqueeze(0)  # (1, n, 3)
 
-        min_pts = int(min_pts)
-        pts_gt = torch.cat([p[:, :min_pts] for p in pts_gt_list], dim=0)  # (B, n, 3)
-        pts_pred = torch.cat([p[:, :min_pts] for p in pts_pred_list], dim=0)  # (B, n, 3)
+                min_pts = min(min_pts, pts.shape[0])
+                pts_gt_list.append(pts_gt)
+                pts_pred_list.append(pts_rec)
 
-        c_gt = pts_gt.mean(dim=1)  # (B, 3)
-        c_pred = pts_pred.mean(dim=1)  # (B, 3)
+            min_pts = int(min_pts)
+            pts_gt = torch.cat([p[:, :min_pts] for p in pts_gt_list], dim=0)  # (B, n, 3)
+            pts_pred = torch.cat([p[:, :min_pts] for p in pts_pred_list], dim=0)  # (B, n, 3)
 
-        centroid_loss = self._mse(c_pred, c_gt) * self.centroid_weight
-        pcl_loss = self._mse(pts_pred, pts_gt) * self.pcl_weight
+            c_gt = pts_gt.mean(dim=1)  # (B, 3)
+            c_pred = pts_pred.mean(dim=1)  # (B, 3)
+
+            centroid_loss = centroid_loss + self._mse(c_pred, c_gt)
+            pcl_loss = pcl_loss + self._mse(pts_pred, pts_gt)
+
+        centroid_loss = centroid_loss / T * self.centroid_weight
+        pcl_loss = pcl_loss / T * self.pcl_weight
 
         autocast_ctx.__exit__(None, None, None)
         return {

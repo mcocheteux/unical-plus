@@ -16,6 +16,7 @@ from unical.data.dataset import Batch
 from unical.losses.combined import CombinedLoss
 from unical.models.backbone import MobileViTBackbone
 from unical.models.head import SplitRegressionHead
+from unical.models.temporal import TemporalFusion
 from unical.utils.metrics import CalibMetrics
 from unical.utils.transform import Transform, rotation_6d_to_matrix
 
@@ -28,6 +29,11 @@ class UniCal(L.LightningModule):
         backbone:      MobileViTBackbone instance.
         head:          SplitRegressionHead instance.
         loss:          CombinedLoss instance.
+        temporal:      TemporalFusion instance, aggregating a window of T
+                       per-frame backbone features into one vector before the
+                       head. ``fusion_type="none"`` is a parameter-free mean
+                       that is the identity at T=1, so single-frame runs are
+                       unaffected.
         lr:            Adam learning rate.
         weight_decay:  Adam weight decay.
     """
@@ -37,16 +43,18 @@ class UniCal(L.LightningModule):
         backbone: MobileViTBackbone,
         head: SplitRegressionHead,
         loss: CombinedLoss,
+        temporal: TemporalFusion | None = None,
         lr: float = 3e-5,
         weight_decay: float = 1e-4,
         warmup_epochs: int = 0,
     ) -> None:
         super().__init__()
-        self.save_hyperparameters(ignore=["backbone", "head", "loss"])
+        self.save_hyperparameters(ignore=["backbone", "head", "loss", "temporal"])
 
         self.backbone = backbone
         self.head = head
         self.loss_fn = loss
+        self.temporal = temporal if temporal is not None else TemporalFusion(fusion_type="none")
 
         self._train_metrics = CalibMetrics()
         self._val_metrics = CalibMetrics()
@@ -58,8 +66,17 @@ class UniCal(L.LightningModule):
 
     def forward(self, batch: Batch) -> tuple[torch.Tensor, torch.Tensor]:
         """Return (trans_pred (B,3), rot6d_pred (B,6))."""
-        features = self.backbone(batch)
-        return self.head(features)
+        B, T = batch.img.shape[0], batch.img.shape[1]
+        flat_batch = Batch(
+            img=batch.img.reshape(B * T, *batch.img.shape[2:]),
+            lidar_map=batch.lidar_map.reshape(B * T, *batch.lidar_map.shape[2:]),
+            target_reg=batch.target_reg,
+            pcl=batch.pcl,
+            metadata=batch.metadata,
+        )
+        features = self.backbone(flat_batch).reshape(B, T, -1)  # (B, T, D)
+        fused = self.temporal(features)  # (B, D)
+        return self.head(fused)
 
     # ------------------------------------------------------------------
     # Shared step

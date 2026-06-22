@@ -36,6 +36,62 @@ class ErrorGenerator:
         return Transform(T)
 
 
+class DualErrorGenerator:
+    """
+    Sample independent camera-side and LiDAR-side decalibrations.
+
+    Real-world miscalibration can originate from either sensor mount drifting
+    independently, rather than only the LiDAR. Composing the two draws into a
+    single net decalibration requires the ground-truth extrinsic (to conjugate
+    the camera-side error into the LiDAR frame), so this generator returns
+    both raw draws and the caller (the dataset, which has ``T_gt``) composes
+    them — see ``compose_net_decalibration``. With ``r_range_cam =
+    t_range_cam = 0`` the camera draw is always identity, so the composed
+    result degenerates exactly to a plain ``ErrorGenerator(r_range_lidar,
+    t_range_lidar)``.
+
+    Args:
+        r_range_lidar: Max absolute LiDAR-side rotation error in degrees.
+        t_range_lidar: Max absolute LiDAR-side translation error in centimetres.
+        r_range_cam:   Max absolute camera-side rotation error in degrees.
+        t_range_cam:   Max absolute camera-side translation error in centimetres.
+    """
+
+    def __init__(
+        self,
+        r_range_lidar: float,
+        t_range_lidar: float,
+        r_range_cam: float = 0.0,
+        t_range_cam: float = 0.0,
+    ) -> None:
+        self._lidar_gen = ErrorGenerator(r_range_lidar, t_range_lidar)
+        self._cam_gen = ErrorGenerator(r_range_cam, t_range_cam)
+
+    def __call__(self, generator: torch.Generator | None = None) -> tuple[Transform, Transform]:
+        """Sample (T_decal_lidar, T_decal_cam). Pass a seeded ``generator``
+        for reproducibility (used by the val/test splits)."""
+        T_decal_lidar = self._lidar_gen(generator=generator)
+        T_decal_cam = self._cam_gen(generator=generator)
+        return T_decal_lidar, T_decal_cam
+
+
+def compose_net_decalibration(
+    T_decal_lidar: Transform, T_decal_cam: Transform, T_gt: Transform
+) -> Transform:
+    """
+    Compose independent camera- and LiDAR-side decalibrations into the single
+    net error the model predicts, given the ground-truth extrinsic ``T_gt``.
+
+    T_init = T_decal_lidar @ T_gt @ T_decal_cam.inverse()
+    T_decal_net = T_init @ T_gt.inverse()
+
+    With ``T_decal_cam`` the identity this reduces to ``T_decal_net ==
+    T_decal_lidar``, matching the LiDAR-only behaviour.
+    """
+    T_init = T_decal_lidar @ T_gt @ T_decal_cam.inverse()
+    return T_init @ T_gt.inverse()
+
+
 class ErrorGenerator6D:
     """
     Per-axis decalibration ranges (lists of three values, one per axis).

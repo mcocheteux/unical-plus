@@ -21,7 +21,9 @@ class KittiDataModule(L.LightningDataModule):
         splits:       Dict with keys "train", "val", "test", each a
                       List[Tuple[date_str, List[drive_id]]].
         preprocessor: Configured DataPreprocessor instance.
-        decalibrator: Configured ErrorGenerator instance.
+        decalibrator: Configured DualErrorGenerator instance.
+        sequence_length: Number of consecutive frames per sample window.
+        frame_stride:    Gap between sampled frames within a window.
         batch_size:   Samples per GPU.
         num_workers:  DataLoader workers.
         pin_memory:   Pin memory for GPU transfers.
@@ -33,6 +35,8 @@ class KittiDataModule(L.LightningDataModule):
         splits: dict[str, Any],
         preprocessor: Any,
         decalibrator: Any,
+        sequence_length: int = 1,
+        frame_stride: int = 1,
         batch_size: int = 8,
         num_workers: int = 4,
         pin_memory: bool = True,
@@ -54,6 +58,8 @@ class KittiDataModule(L.LightningDataModule):
                 split=self._splits[key],
                 preprocessor=self._preprocessor,
                 decalibrator=self._decalibrator,
+                sequence_length=self.hparams.sequence_length,
+                frame_stride=self.hparams.frame_stride,
                 deterministic=key != "train",
             )
 

@@ -55,17 +55,21 @@ def test_step_runs_under_bf16_autocast():
     B, N = 2, 40
     eye, zero = np.eye(3, dtype=np.float32), np.zeros(3, dtype=np.float32)
     meta = [
-        {
-            "T_gt": Transform.from_rotation_translation(eye, zero),
-            "T_init": Transform.from_rotation_translation(eye, np.array([0.01, 0, 0], np.float32)),
-        }
-        for _ in range(B)
+        [
+            {
+                "T_gt": Transform.from_rotation_translation(eye, zero),
+                "T_init": Transform.from_rotation_translation(
+                    eye, np.array([0.01, 0, 0], np.float32)
+                ),
+            }
+            for _ in range(B)
+        ]
     ]
     batch = Batch(
-        img=torch.randn(B, 3, 64, 64),
-        lidar_map=torch.randn(B, 1, 64, 64),
+        img=torch.randn(B, 1, 3, 64, 64),
+        lidar_map=torch.randn(B, 1, 1, 64, 64),
         target_reg=(torch.randn(B, 3) * 0.05, rotation_6d_to_matrix(torch.randn(B, 6))),
-        pcl=torch.rand(B, N, 4) + 1.0,
+        pcl=[torch.rand(B, N, 4) + 1.0],
         metadata=meta,
     )
     with torch.autocast(device_type="cpu", dtype=torch.bfloat16):
