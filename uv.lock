@@ -719,7 +719,7 @@ wheels = [
 [[package]]
 name = "kitti-c2l"
 version = "0.1.0"
-source = { git = "https://github.com/mcocheteux/KITTI-C2L-Dataset.git#d6d74b20b8ff3e2d43d773efc82c543a7fff3a13" }
+source = { git = "https://github.com/mcocheteux/KITTI-C2L-Dataset.git#095baca328d7862e3f5a605177e6917c9ec767e9" }
 dependencies = [
     { name = "numpy" },
     { name = "pillow" },
