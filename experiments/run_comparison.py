@@ -79,12 +79,18 @@ def main() -> None:
                 f"+data.temporal_batch={str(args.variant == 'branch').lower()}",
             ]
         elif args.protocol == "windows":
-            assert args.variant == "branch"
-            overrides += [
-                "data.dataset_format=windows",
-                f"data.sequence_length={args.sequence_length}",
-                f"data.minimum_context_length={args.minimum_context_length}",
-            ]
+            if args.variant == "branch":
+                overrides += [
+                    "data.dataset_format=windows",
+                    f"data.sequence_length={args.sequence_length}",
+                    f"data.minimum_context_length={args.minimum_context_length}",
+                ]
+            else:
+                assert args.sequence_length == 1, "Exact main consumes one anchor frame"
+                overrides += [
+                    "data._target_=window_c2l.MainWindowDataModule",
+                    f"+data.minimum_context_length={args.minimum_context_length}",
+                ]
     with initialize_config_dir(config_dir=str(root / "configs"), version_base="1.3"):
         cfg = compose(config_name="train", overrides=overrides)
     if args.protocol == "usual":

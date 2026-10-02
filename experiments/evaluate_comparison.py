@@ -59,12 +59,18 @@ def main() -> None:
         assert args.variant == "branch", "Preserve exact main preprocessing"
         overrides += [f"+data.preprocessor.cfg.image_normalization={args.image_normalization}"]
     if args.protocol == "windows":
-        assert args.variant == "branch", "Use branch T=1 as the temporal implementation control"
-        overrides += [
-            "data.dataset_format=windows",
-            f"data.sequence_length={args.sequence_length}",
-            f"data.minimum_context_length={args.minimum_context_length}",
-        ]
+        if args.variant == "branch":
+            overrides += [
+                "data.dataset_format=windows",
+                f"data.sequence_length={args.sequence_length}",
+                f"data.minimum_context_length={args.minimum_context_length}",
+            ]
+        else:
+            assert args.sequence_length == 1, "Exact main consumes one anchor frame"
+            overrides += [
+                "data._target_=window_c2l.MainWindowDataModule",
+                f"+data.minimum_context_length={args.minimum_context_length}",
+            ]
     elif args.protocol == "relative":
         overrides += [
             "data._target_=relative_c2l.RelativeC2LDataModule",
