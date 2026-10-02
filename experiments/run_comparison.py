@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import subprocess
 from pathlib import Path
 
@@ -35,6 +36,7 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--epochs", type=int, default=120)
     parser.add_argument("--warmup-epochs", type=int)
+    parser.add_argument("--target-training-frames", type=int)
     parser.add_argument("--batch-size", type=int, default=2)
     parser.add_argument("--precision", choices=["32-true", "bf16-mixed"], default="32-true")
     parser.add_argument(
@@ -51,6 +53,8 @@ def main() -> None:
         parser.error("Exact main has no temporal fusion")
     if args.warmup_epochs is not None and args.warmup_epochs < 0:
         parser.error("Warmup epochs must be nonnegative")
+    if args.target_training_frames is not None and args.target_training_frames < 1:
+        parser.error("Target training frames must be positive")
     assert torch.cuda.is_available(), "This runner requires the local CUDA GPU"
     root = Path(unical.__file__).resolve().parents[2]
     overrides = [
@@ -114,6 +118,11 @@ def main() -> None:
     assert hasattr(model, "temporal") == (args.variant == "branch"), "Wrong code checkout imported"
     counts = {s: len(getattr(data, f"{s}_ds")) for s in ["train", "val", "test"]}
     assert min(counts.values()) > 0
+    if args.target_training_frames is not None:
+        args.epochs = math.ceil(
+            args.target_training_frames / (counts["train"] * args.sequence_length)
+        )
+        cfg.trainer.max_epochs = args.epochs
     print("Experiment samples:", counts, flush=True)
     print(
         "Training schedule:",
@@ -142,6 +151,7 @@ def main() -> None:
             "image_normalization",
             "epochs",
             "warmup_epochs",
+            "target_training_frames",
             "data_dir",
             "raw_root",
         ]:
