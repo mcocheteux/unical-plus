@@ -157,10 +157,21 @@ target `T_init @ T_gt⁻¹`. Rotation ranges are degrees per axis and translatio
 ranges are centimetres per axis. An identity camera perturbation still leaves
 a LiDAR-local perturbation; its relative target is conjugated by `T_gt`.
 
-`data=kitti_c2l` retains the published per-frame targets and supplies T=1
-batches. It does not pool independently perturbed benchmark rows into a shared
-temporal target. DataLoader workers use spawn to avoid inheriting background
-thread locks from pretrained model loading.
+`data=kitti_c2l` defaults to the published independent per-frame targets and
+T=1 batches. The published constant-error windows are also supported:
+
+```bash
+uv run python train.py data=kitti_c2l \
+    data.data_dir=/path/to/KITTI-C2L-Dataset/data \
+    data.kitti_raw_root=/path/to/kitti_raw \
+    data.dataset_format=windows data.sequence_length=3 \
+    model.temporal.fusion_type=transformer
+```
+
+Observations end at their anchor frame and never cross a published window
+boundary. For paired T=1/T=3 comparisons, set `data.minimum_context_length=3`
+in both runs so their anchors and published targets match. DataLoader workers
+use spawn to avoid inheriting background thread locks from pretrained loading.
 
 ### Evaluate
 

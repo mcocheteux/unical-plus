@@ -99,42 +99,101 @@ class KittiC2LDataset(Dataset):
 
         drive_dir = _drive_dir(self.kitti_raw_root, row["raw_date"], row["raw_drive"])
         camera_id = int(row["camera_id"])
-        img_path = drive_dir / f"image_0{camera_id}" / "data" / f"{row['raw_frame_index']:010d}.png"
-        lidar_path = drive_dir / "velodyne_points" / "data" / f"{row['raw_frame_index']:010d}.bin"
-
-        img = load_image_rgb(str(img_path))
-        raw_pcl = np.fromfile(str(lidar_path), dtype=np.float32).reshape(-1, 4)
-
         K = np.array(row["camera_intrinsics"], dtype=np.float32).reshape(3, 3)
         T_gt = _row_transform(row, "gt")
-        T_init = _row_transform(row, "miscal")  # decalibrated extrinsic
-        T_decal = T_init @ T_gt.inverse()  # the correction the model must predict
-
-        img_pp, lidar_map = self.preprocessor(img.copy(), raw_pcl.copy(), T_init.matrix, K.copy())
-
-        return {
-            "img": torch.from_numpy(img_pp).permute(2, 0, 1).unsqueeze(0),
-            "lidar_map": torch.from_numpy(lidar_map).permute(2, 0, 1).unsqueeze(0),
-            "trans": torch.from_numpy(T_decal.translation),
-            "rot_mat": torch.from_numpy(T_decal.rotation_matrix),
-            "pcl": [torch.from_numpy(raw_pcl)],
-            "metadata": [
+        T_init = _row_transform(row, "miscal")
+        T_decal = T_init @ T_gt.inverse()
+        images, lidar_maps, point_clouds, metadata = [], [], [], []
+        for fid in self._frame_indices(row):
+            img_path = drive_dir / f"image_0{camera_id}" / "data" / f"{fid:010d}.png"
+            lidar_path = drive_dir / "velodyne_points" / "data" / f"{fid:010d}.bin"
+            img = load_image_rgb(str(img_path))
+            raw_pcl = np.fromfile(str(lidar_path), dtype=np.float32).reshape(-1, 4)
+            img_pp, lidar_map = self.preprocessor(
+                img.copy(), raw_pcl.copy(), T_init.matrix, K.copy()
+            )
+            images.append(torch.from_numpy(img_pp).permute(2, 0, 1))
+            lidar_maps.append(torch.from_numpy(lidar_map).permute(2, 0, 1))
+            point_clouds.append(torch.from_numpy(raw_pcl))
+            metadata.append(
                 {
                     "T_gt": T_gt,
                     "T_init": T_init,
                     "T_decal": T_decal,
                     "K": K,
-                    "img_name": row["sample_id"],
+                    "img_name": row.get("sample_id", row.get("window_id")),
                     "sequence": row["sequence"],
-                    "frame_index": row["frame_index"],
+                    "frame_index": row.get("frame_index", row.get("window_anchor_frame")),
+                    "raw_frame_index": fid,
                     "stage": row["stage"],
+                    "window_id": row.get("window_id"),
                 }
-            ],
+            )
+        return {
+            "img": torch.stack(images),
+            "lidar_map": torch.stack(lidar_maps),
+            "trans": torch.from_numpy(T_decal.translation),
+            "rot_mat": torch.from_numpy(T_decal.rotation_matrix),
+            "pcl": point_clouds,
+            "metadata": metadata,
         }
+
+    def _frame_indices(self, row: dict) -> list[int]:
+        return [row["raw_frame_index"]]
 
     @staticmethod
     def collate(samples: list[dict]) -> Batch:
         return KittiDataset.collate(samples)  # identical shape, reuse as-is
+
+
+class KittiC2LWindowDataset(KittiC2LDataset):
+    """Causal observations contained within a published constant-error window.
+
+    Args:
+        sequence_length: Frames per observation, ending at its anchor frame.
+        frame_stride: Spacing between observed frames.
+        anchor_stride: Spacing between observation anchors.
+        minimum_context_length: Reserve this many frames before the first anchor.
+            Set to the same value for T=1 and T>1 to compare identical anchors.
+        **kwargs: Metadata path, raw assets, preprocessing and split filters.
+
+    Published targets are kept verbatim. Observations never cross a published
+    window boundary, a drive boundary, or a sequence split.
+    """
+
+    def __init__(
+        self,
+        parquet_path: str | Path,
+        kitti_raw_root: str | Path,
+        preprocessor: DataPreprocessor,
+        sequence_length: int = 3,
+        frame_stride: int = 1,
+        anchor_stride: int = 1,
+        minimum_context_length: int | None = None,
+        **kwargs: Any,
+    ) -> None:
+        context = sequence_length if minimum_context_length is None else minimum_context_length
+        if min(sequence_length, frame_stride, anchor_stride) < 1 or context < sequence_length:
+            raise ValueError("Positive lengths/strides and context >= sequence_length required")
+        super().__init__(parquet_path, kitti_raw_root, preprocessor, **kwargs)
+        self.sequence_length = sequence_length
+        self.frame_stride = frame_stride
+        self._rows = [
+            row
+            | {
+                "window_anchor_offset": offset,
+                "window_anchor_frame": row["window_start_frame"] + offset,
+            }
+            for row in self._rows
+            for offset in range((context - 1) * frame_stride, row["window_length"], anchor_stride)
+        ]
+
+    def _frame_indices(self, row: dict) -> list[int]:
+        anchor = row["raw_frame_start_index"] + row["window_anchor_offset"]
+        return [
+            anchor - (self.sequence_length - 1 - i) * self.frame_stride
+            for i in range(self.sequence_length)
+        ]
 
 
 class KittiC2LDataModule(L.LightningDataModule):
@@ -163,40 +222,61 @@ class KittiC2LDataModule(L.LightningDataModule):
         kitti_raw_root: str,
         preprocessor: Any,
         val_sequence: str = "07",
+        dataset_format: str = "frames",
+        sequence_length: int = 1,
+        frame_stride: int = 1,
+        anchor_stride: int = 1,
+        minimum_context_length: int | None = None,
         stages: list[int] | None = None,
         batch_size: int = 8,
         num_workers: int = 4,
         pin_memory: bool = True,
     ) -> None:
         super().__init__()
+        # Hydra supplies ListConfig for stage filters; normalize before saving
+        # so trusted training checkpoints also support weights-only loading.
+        stages = list(stages) if stages is not None else None
         self.save_hyperparameters(ignore=["preprocessor"])
         self._preprocessor = preprocessor
         self._stage_set = set(stages) if stages is not None else None
+        if dataset_format not in ("frames", "windows"):
+            raise ValueError(f"Unknown dataset_format: {dataset_format}")
+        if dataset_format == "frames" and sequence_length != 1:
+            raise ValueError("Independent frame targets require sequence_length=1")
 
     def setup(self, stage: str | None = None) -> None:
         data_dir = Path(self.hparams.data_dir)
         val_seq = {self.hparams.val_sequence}
 
-        self.train_ds = KittiC2LDataset(
-            data_dir / "train.parquet",
-            self.hparams.kitti_raw_root,
-            self._preprocessor,
-            stages=self._stage_set,
-            exclude_sequences=val_seq,
+        dataset_class = (
+            KittiC2LWindowDataset if self.hparams.dataset_format == "windows" else KittiC2LDataset
         )
-        self.val_ds = KittiC2LDataset(
-            data_dir / "train.parquet",
-            self.hparams.kitti_raw_root,
-            self._preprocessor,
+        extra = {}
+        prefix = ""
+        if self.hparams.dataset_format == "windows":
+            prefix = "windows_"
+            extra = {
+                key: self.hparams[key]
+                for key in (
+                    "sequence_length",
+                    "frame_stride",
+                    "anchor_stride",
+                    "minimum_context_length",
+                )
+            }
+        common = dict(
+            kitti_raw_root=self.hparams.kitti_raw_root,
+            preprocessor=self._preprocessor,
             stages=self._stage_set,
-            include_sequences=val_seq,
+            **extra,
         )
-        self.test_ds = KittiC2LDataset(
-            data_dir / "test.parquet",
-            self.hparams.kitti_raw_root,
-            self._preprocessor,
-            stages=self._stage_set,
+        self.train_ds = dataset_class(
+            data_dir / f"{prefix}train.parquet", exclude_sequences=val_seq, **common
         )
+        self.val_ds = dataset_class(
+            data_dir / f"{prefix}train.parquet", include_sequences=val_seq, **common
+        )
+        self.test_ds = dataset_class(data_dir / f"{prefix}test.parquet", **common)
 
     def _loader(self, ds: KittiC2LDataset, shuffle: bool) -> DataLoader:
         return DataLoader(

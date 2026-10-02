@@ -177,3 +177,94 @@ def test_full_pipeline_through_real_model_cpu(kitti_c2l_fixture: tuple[Path, Pat
         losses, pred_Ts, target_Ts = model._step(batch)
     assert torch.isfinite(losses["loss"])
     assert len(pred_Ts) == len(target_Ts) == batch.img.shape[0]
+
+
+def _window_parquet(data_dir: Path) -> Path:
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    rows = pq.read_table(data_dir / "train.parquet").to_pylist()
+    windows = []
+    for row, start, length in [(rows[0], 0, 4), (rows[1], 4, 2)]:
+        row = row | {
+            "window_id": f"00_{start:06d}_stage{row['stage']}",
+            "window_start_frame": start,
+            "raw_frame_start_index": start,
+            "window_length": length,
+        }
+        for key in ("sample_id", "frame_index", "raw_frame_index"):
+            row.pop(key, None)
+        windows.append(row)
+    path = data_dir / "windows_train.parquet"
+    pq.write_table(pa.Table.from_pylist(windows), path)
+    return path
+
+
+def test_published_windows_share_target_and_never_cross_boundaries(kitti_c2l_fixture):
+    from unical.data.kitti_c2l_dataset import KittiC2LWindowDataset
+
+    raw_root, data_dir = kitti_c2l_fixture
+    ds = KittiC2LWindowDataset(
+        _window_parquet(data_dir),
+        raw_root,
+        _small_preprocessor(),
+        sequence_length=3,
+    )
+    assert len(ds) == 2  # short second window cannot supply three frames
+    first, last = ds[0], ds[1]
+    assert first["img"].shape == (3, 3, IMAGE_SIZE, IMAGE_SIZE)
+    assert [m["raw_frame_index"] for m in first["metadata"]] == [0, 1, 2]
+    assert [m["raw_frame_index"] for m in last["metadata"]] == [1, 2, 3]
+    assert all(m["window_id"] == first["metadata"][0]["window_id"] for m in first["metadata"])
+    torch.testing.assert_close(first["trans"], last["trans"])
+    torch.testing.assert_close(first["rot_mat"], last["rot_mat"])
+    for meta in first["metadata"]:
+        np.testing.assert_allclose(
+            (meta["T_decal"] @ meta["T_gt"]).matrix, meta["T_init"].matrix, atol=1e-4
+        )
+
+
+def test_single_and_temporal_windows_use_identical_anchors_and_targets(kitti_c2l_fixture):
+    from unical.data.kitti_c2l_dataset import KittiC2LWindowDataset
+
+    raw_root, data_dir = kitti_c2l_fixture
+    path = _window_parquet(data_dir)
+    kwargs = dict(
+        parquet_path=path,
+        kitti_raw_root=raw_root,
+        preprocessor=_small_preprocessor(),
+        minimum_context_length=3,
+    )
+    single = KittiC2LWindowDataset(sequence_length=1, **kwargs)
+    temporal = KittiC2LWindowDataset(sequence_length=3, **kwargs)
+    assert len(single) == len(temporal) == 2
+    for one, multi in zip(single, temporal):
+        assert one["metadata"][0]["frame_index"] == multi["metadata"][-1]["frame_index"]
+        torch.testing.assert_close(one["img"][0], multi["img"][-1])
+        torch.testing.assert_close(one["lidar_map"][0], multi["lidar_map"][-1])
+        torch.testing.assert_close(one["trans"], multi["trans"])
+        torch.testing.assert_close(one["rot_mat"], multi["rot_mat"])
+
+
+def test_independent_frame_metadata_rejects_temporal_target_pooling():
+    with pytest.raises(ValueError, match="Independent frame targets"):
+        KittiC2LDataModule("unused", "unused", _small_preprocessor(), sequence_length=3)
+
+
+def test_hydra_stage_filters_remain_weights_only_checkpoint_compatible(tmp_path):
+    from omegaconf import OmegaConf
+
+    dm = KittiC2LDataModule(
+        "unused",
+        "unused",
+        _small_preprocessor(),
+        stages=OmegaConf.create([5]),
+        dataset_format="windows",
+        sequence_length=3,
+    )
+    assert type(dm.hparams.stages) is list
+    path = tmp_path / "hyperparameters.pt"
+    torch.save(dict(dm.hparams), path)
+    loaded = torch.load(path, weights_only=True)
+    assert loaded["stages"] == [5]
+    assert loaded["sequence_length"] == 3
