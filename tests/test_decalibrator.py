@@ -16,8 +16,8 @@ def _random_T_gt(seed: int = 0) -> Transform:
     return Transform(euler_to_transform_matrix(trans, rot).numpy())
 
 
-def test_zero_camera_range_matches_lidar_only_error_generator():
-    """r_range_cam = t_range_cam = 0 must reproduce plain LiDAR-only ErrorGenerator."""
+def test_zero_camera_range_conjugates_lidar_local_error():
+    """Zero camera drift leaves a LiDAR-local perturbation conjugated by T_gt."""
     T_gt = _random_T_gt()
     gen = torch.Generator().manual_seed(42)
     dual = DualErrorGenerator(
@@ -33,7 +33,8 @@ def test_zero_camera_range_matches_lidar_only_error_generator():
     np.testing.assert_allclose(T_decal_cam.matrix, np.eye(4), atol=1e-6)
 
     T_decal_net = compose_net_decalibration(T_decal_lidar, T_decal_cam, T_gt)
-    np.testing.assert_allclose(T_decal_net.matrix, T_decal_lidar.matrix, atol=1e-5)
+    expected = T_gt @ T_decal_lidar @ T_gt.inverse()
+    np.testing.assert_allclose(T_decal_net.matrix, expected.matrix, atol=1e-5)
 
 
 def test_nonzero_camera_range_produces_nontrivial_composition():
@@ -48,11 +49,24 @@ def test_nonzero_camera_range_produces_nontrivial_composition():
 
     T_decal_net = compose_net_decalibration(T_decal_lidar, T_decal_cam, T_gt)
 
-    # T_decal_net @ T_gt must recover T_init = T_decal_lidar @ T_gt @ T_decal_cam.inverse()
-    T_init_expected = T_decal_lidar @ T_gt @ T_decal_cam.inverse()
+    # T_decal_net @ T_gt must recover T_init = T_decal_cam.inverse() @ T_gt @ T_decal_lidar
+    T_init_expected = T_decal_cam.inverse() @ T_gt @ T_decal_lidar
     T_init_actual = T_decal_net @ T_gt
     np.testing.assert_allclose(T_init_actual.matrix, T_init_expected.matrix, atol=1e-5)
 
     # With a nonzero camera-side error, the net decalibration differs from the
     # LiDAR-only draw (camera error gets folded in via conjugation by T_gt).
     assert not np.allclose(T_decal_net.matrix, T_decal_lidar.matrix, atol=1e-4)
+
+
+def test_sensor_local_translation_uses_correct_coordinate_frame():
+    # Camera x points along LiDAR -y. A LiDAR-local +x drift must appear
+    # along camera +y, while a camera-local +x drift acts along camera -x.
+    T_gt = Transform.from_rotation_translation(
+        np.array([[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]], dtype=np.float32),
+        np.array([2.0, 3.0, 4.0], dtype=np.float32),
+    )
+    lidar = Transform.from_rotation_translation(np.eye(3), np.array([0.1, 0.0, 0.0]))
+    cam = Transform.from_rotation_translation(np.eye(3), np.array([0.2, 0.0, 0.0]))
+    net = compose_net_decalibration(lidar, cam, T_gt)
+    np.testing.assert_allclose(net.translation, [-0.2, 0.1, 0.0], atol=1e-6)

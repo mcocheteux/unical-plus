@@ -1,0 +1,37 @@
+# KITTI-C2L benchmark DataModule configuration
+#
+# Trains/evaluates UniCal on the published KITTI-C2L-Dataset
+# (github.com/mcocheteux/KITTI-C2L-Dataset) instead of on-the-fly
+# ErrorGenerator decalibrations: fixed, seeded, per-(sequence, frame, stage)
+# decalibrations, reproducible across papers/methods. Swap in with:
+#
+#   python train.py data=kitti_c2l \
+#     data.data_dir=/path/to/KITTI-C2L-Dataset/data \
+#     data.kitti_raw_root=/path/to/KITTI/raw
+
+_target_: unical.data.kitti_c2l_dataset.KittiC2LDataModule
+
+data_dir: ???          # directory containing train.parquet / test.parquet
+kitti_raw_root: ???    # local KITTI raw root: <date>/<date>_drive_<drive>_sync/...
+
+batch_size:  8
+num_workers: 4
+pin_memory:  false   # MPS does not support pinned memory; harmless to leave false on CUDA
+
+val_sequence: "07"    # held out whole sequence from train.parquet, see KittiC2LDataModule docstring
+stages: null           # null = all 5 difficulty stages pooled; e.g. [1] to train on stage 1 only
+
+# Preprocessor: resizes image + LiDAR map, applies augmentation, normalises.
+# Identical to configs/data/kitti.yaml's -- keep in sync so results are comparable.
+preprocessor:
+  _target_: unical.data.preprocessor.DataPreprocessor
+  cfg:
+    _target_: unical.data.preprocessor.PreprocessorConfig
+    width:         512
+    height:        512
+    grayscale:     false
+    add_intensity: false
+    min_depth:     2.0     # metres
+    max_depth:     80.0    # metres
+    augmentation:
+      _target_: unical.utils.augmentation.AugmentationConfig

@@ -20,8 +20,8 @@ Accurate extrinsic calibration between cameras and LiDAR sensors is critical for
 autonomous vehicle perception. Factory calibrations degrade over time, and
 target-based re-calibration is expensive.
 
-**UniCal** learns to estimate the correction from a single snapshot — one RGB
-image + one LiDAR scan — with no calibration target needed. It processes both
+**UniCal** learns to estimate the correction from one RGB image and LiDAR scan,
+or a short window of consecutive pairs, with no calibration target needed. It processes both
 modalities through a shared MobileViT backbone (early fusion), predicts a 6-D
 continuous rotation and a translation vector, and is supervised by a combined
 regression + 3-D spatial loss.
@@ -37,7 +37,8 @@ regression + 3-D spatial loss.
 | 📐 **Spatial loss** | Differentiable point-cloud projection loss penalises 3-D misalignment directly, not just regression targets |
 | ⚡ **AMP-safe geometry** | Rigid-transform math is pinned to full precision inside mixed-precision training |
 | 🧩 **Hydra config** | Every hyperparameter is a CLI override — no code edits needed to run experiments |
-| 🔬 **46 tests** | Full pytest suite covering models, losses, transforms, augmentation, and geometry |
+| ⏱️ **Temporal fusion** | Mean, GRU, or Transformer aggregation predicts one shared correction per window |
+| 🔬 **Tests** | Geometry, windowing, benchmark integration, and local CUDA optimizer/checkpoint checks |
 
 ---
 
@@ -123,16 +124,58 @@ python train.py data_dir=/path/to/kitti_raw experiment=debug \
     trainer.max_epochs=2 trainer.accelerator=cpu data.num_workers=0
 ```
 
+### Temporal fusion and dual-sensor drift
+
+The defaults use a single frame and parameter-free mean fusion. Temporal
+windows stay within a drive, require every sampled frame to exist, and share
+one decalibration target. Enable learned fusion with:
+
+```bash
+uv run python train.py data_dir=/path/to/kitti_raw \
+    data.sequence_length=3 data.frame_stride=1 \
+    model.temporal.fusion_type=transformer
+# Or: model.temporal.fusion_type=gru
+```
+
+Transformer windows must fit `model.temporal.max_seq_len` (16 by default).
+GPU memory grows with batch size × window length; on an 8 GB GPU, start with
+`data.batch_size=1 trainer.precision=bf16-mixed trainer.accelerator=gpu`.
+
+The default `ErrorGenerator` samples a relative perturbation in camera
+coordinates. To simulate independent sensor-local mounting drift, replace it:
+
+```bash
+uv run python train.py data_dir=/path/to/kitti_raw \
+    data.sequence_length=3 model.temporal.fusion_type=transformer \
+    '~data.decalibrator' \
+    '+data.decalibrator={_target_:unical.data.decalibrator.DualErrorGenerator,r_range_lidar:1.0,t_range_lidar:10.0,r_range_cam:1.0,t_range_cam:10.0}'
+```
+
+The dual generator right-perturbs each sensor-to-rig pose in its own local
+frame. It produces `T_init = D_cam⁻¹ @ T_gt @ D_lidar`, with relative regression
+target `T_init @ T_gt⁻¹`. Rotation ranges are degrees per axis and translation
+ranges are centimetres per axis. An identity camera perturbation still leaves
+a LiDAR-local perturbation; its relative target is conjugated by `T_gt`.
+
+`data=kitti_c2l` retains the published per-frame targets and supplies T=1
+batches. It does not pool independently perturbed benchmark rows into a shared
+temporal target. DataLoader workers use spawn to avoid inheriting background
+thread locks from pretrained model loading.
+
 ### Evaluate
 
 ```bash
 python evaluate.py data_dir=/path/to/kitti_raw +ckpt=logs/checkpoints/last.ckpt
+# Pass the same data/model overrides used during training, including temporal fusion.
 ```
 
 ### Run tests
 
 ```bash
 uv run pytest -v
+
+# CUDA optimizer steps, bf16/fp32 geometry, and checkpoint reloads on the local GPU
+CUDA_VISIBLE_DEVICES=0 uv run pytest -v tests/test_gpu_training.py
 ```
 
 ---
@@ -188,7 +231,7 @@ unical/
 │   ├── losses/                 # Regression, spatial, combined
 │   ├── data/                   # Dataset, DataModule, preprocessor
 │   └── utils/                  # Transform, geometry, augmentation, metrics
-├── tests/                      # 46 pytest tests (no data required)
+├── tests/                      # Synthetic tests; CUDA checks skip without a local GPU
 └── deploy/vast/                # Vast.ai GPU provisioning scripts
 ```
 

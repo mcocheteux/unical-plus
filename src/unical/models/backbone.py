@@ -64,6 +64,7 @@ class MobileViTBackbone(nn.Module):
         if pretrained:
             self.model = MobileViTModel.from_pretrained(pretrained)
             self._inflate_stem(in_channels, img_channels)
+            self.model.train()
         else:
             cfg = MobileViTConfig(
                 num_channels=in_channels,

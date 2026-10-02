@@ -28,7 +28,7 @@ backbone:
 temporal:
   _target_: unical.models.temporal.TemporalFusion
   feature_dim:         640   # must match backbone GAP output / head.in_features
-  fusion_type:         transformer   # "none" | "gru" | "transformer"
+  fusion_type:         none   # "none" | "gru" | "transformer"
   transformer_layers:  2
   transformer_heads:   4
   transformer_ff_dim:  1024

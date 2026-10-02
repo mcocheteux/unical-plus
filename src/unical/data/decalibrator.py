@@ -40,15 +40,11 @@ class DualErrorGenerator:
     """
     Sample independent camera-side and LiDAR-side decalibrations.
 
-    Real-world miscalibration can originate from either sensor mount drifting
-    independently, rather than only the LiDAR. Composing the two draws into a
-    single net decalibration requires the ground-truth extrinsic (to conjugate
-    the camera-side error into the LiDAR frame), so this generator returns
-    both raw draws and the caller (the dataset, which has ``T_gt``) composes
-    them — see ``compose_net_decalibration``. With ``r_range_cam =
-    t_range_cam = 0`` the camera draw is always identity, so the composed
-    result degenerates exactly to a plain ``ErrorGenerator(r_range_lidar,
-    t_range_lidar)``.
+    Each draw is expressed in its sensor's local coordinate frame. If the
+    sensor-to-rig mounting pose is right-perturbed by its draw, the resulting
+    LiDAR-to-camera transform is ``D_cam.inverse() @ T_gt @ D_lidar``.
+    The dataset composes the draws into one relative target using ``T_gt``.
+    Use ``ErrorGenerator`` for the legacy camera-frame relative perturbation.
 
     Args:
         r_range_lidar: Max absolute LiDAR-side rotation error in degrees.
@@ -82,13 +78,14 @@ def compose_net_decalibration(
     Compose independent camera- and LiDAR-side decalibrations into the single
     net error the model predicts, given the ground-truth extrinsic ``T_gt``.
 
-    T_init = T_decal_lidar @ T_gt @ T_decal_cam.inverse()
+    T_init = T_decal_cam.inverse() @ T_gt @ T_decal_lidar
     T_decal_net = T_init @ T_gt.inverse()
 
-    With ``T_decal_cam`` the identity this reduces to ``T_decal_net ==
-    T_decal_lidar``, matching the LiDAR-only behaviour.
+    With an identity camera draw, the LiDAR-local perturbation is conjugated
+    into the camera frame by T_gt. This differs from ErrorGenerator's legacy
+    camera-frame relative perturbation when T_gt is nonidentity.
     """
-    T_init = T_decal_lidar @ T_gt @ T_decal_cam.inverse()
+    T_init = T_decal_cam.inverse() @ T_gt @ T_decal_lidar
     return T_init @ T_gt.inverse()
 
 

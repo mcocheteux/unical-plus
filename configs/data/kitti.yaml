@@ -17,18 +17,13 @@ frame_stride:    1
 # Splits — imported from experiment config (see configs/experiment/)
 splits: ${experiment.splits}
 
-# Decalibrator: samples independent LiDAR-side and camera-side rigid-body
-# perturbations T_decal_lidar/T_decal_cam ~ Uniform(-range, +range), composed
-# (conjugated through the ground-truth extrinsic) into the single net
-# decalibration the model is trained to predict. With r_range_cam=t_range_cam=0
-# (default) the camera draw is identity and this degenerates exactly to the
-# original LiDAR-only ErrorGenerator behaviour.
+# Legacy relative perturbation in camera coordinates. To model independent
+# sensor-local mount drift, use DualErrorGenerator with r_range_lidar,
+# t_range_lidar, r_range_cam and t_range_cam instead (see README).
 decalibrator:
-  _target_: unical.data.decalibrator.DualErrorGenerator
-  r_range_lidar: 1.0      # max LiDAR-side rotation error per axis, in degrees (LCCNet/RegNet regime)
-  t_range_lidar: 10.0     # max LiDAR-side translation error per axis, in centimetres
-  r_range_cam:   0.0      # max camera-side rotation error per axis, in degrees
-  t_range_cam:   0.0      # max camera-side translation error per axis, in centimetres
+  _target_: unical.data.decalibrator.ErrorGenerator
+  r_range: 1.0     # degrees per axis
+  t_range: 10.0    # centimetres per axis
 
 # Preprocessor: resizes image + LiDAR map, applies augmentation, normalises
 preprocessor:

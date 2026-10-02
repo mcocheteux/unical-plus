@@ -92,7 +92,8 @@ class UniCal(L.LightningModule):
         # .float() before .numpy(): under bf16 AMP the predictions are bfloat16,
         # which numpy cannot represent.
         pred_t = pred[0].detach().float().cpu().numpy()
-        pred_R = rotation_6d_to_matrix(pred[1]).detach().float().cpu().numpy()
+        with torch.autocast(device_type=pred[1].device.type, enabled=False):
+            pred_R = rotation_6d_to_matrix(pred[1].float()).detach().cpu().numpy()
         tgt_t = batch.target_reg[0].detach().float().cpu().numpy()
         tgt_R = batch.target_reg[1].detach().float().cpu().numpy()
         pred_Ts = [Transform.from_rotation_translation(pred_R[i], pred_t[i]) for i in range(B)]

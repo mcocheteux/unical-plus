@@ -21,7 +21,7 @@ class KittiDataModule(L.LightningDataModule):
         splits:       Dict with keys "train", "val", "test", each a
                       List[Tuple[date_str, List[drive_id]]].
         preprocessor: Configured DataPreprocessor instance.
-        decalibrator: Configured DualErrorGenerator instance.
+        decalibrator: Configured ErrorGenerator or DualErrorGenerator instance.
         sequence_length: Number of consecutive frames per sample window.
         frame_stride:    Gap between sampled frames within a window.
         batch_size:   Samples per GPU.
@@ -76,6 +76,9 @@ class KittiDataModule(L.LightningDataModule):
             shuffle=shuffle,
             collate_fn=KittiDataset.collate,
             persistent_workers=self.hparams.num_workers > 0,
+            # Pretrained loading can leave HTTP/background-thread locks held.
+            # Spawn workers rather than inheriting these locks through fork.
+            multiprocessing_context="spawn" if self.hparams.num_workers > 0 else None,
         )
 
     def train_dataloader(self) -> DataLoader:

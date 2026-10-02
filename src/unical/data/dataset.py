@@ -14,7 +14,11 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
-from unical.data.decalibrator import DualErrorGenerator, compose_net_decalibration
+from unical.data.decalibrator import (
+    DualErrorGenerator,
+    ErrorGenerator,
+    compose_net_decalibration,
+)
 from unical.data.preprocessor import DataPreprocessor
 from unical.utils.geometry import load_image_rgb
 from unical.utils.transform import Transform
@@ -76,7 +80,7 @@ class KittiDataset(Dataset):
         data_dir: str | Path,
         split: Split,
         preprocessor: DataPreprocessor,
-        decalibrator: DualErrorGenerator,
+        decalibrator: DualErrorGenerator | ErrorGenerator,
         sequence_length: int = 1,
         frame_stride: int = 1,
         deterministic: bool = False,
@@ -107,7 +111,6 @@ class KittiDataset(Dataset):
 
     def _parse(self, split: Split) -> None:
         T, stride = self.sequence_length, self.frame_stride
-        span = (T - 1) * stride
         for date, drives in split:
             date_dir = self.data_dir / date
             self._date_meta[date] = self._read_calibration(date_dir)
@@ -124,26 +127,25 @@ class KittiDataset(Dataset):
                     if lid_path.exists():
                         valid_fids.append(fid)
 
-                # Emit a window per valid start position; require the window's
-                # frame ids to be exactly contiguous at the given stride (drop
-                # incomplete/gappy windows rather than padding).
-                for i in range(len(valid_fids) - span):
-                    window = valid_fids[i : i + span + 1 : stride]
-                    if len(window) != T:
-                        continue
-                    expected = [window[0] + k * stride for k in range(T)]
-                    if window != expected:
-                        continue
-                    self._samples.append((date, drive, window))
+                # Only sampled frames must exist; missing intermediate frames
+                # are harmless when stride > 1.
+                valid_set = set(valid_fids)
+                for fid in valid_fids:
+                    window = [fid + k * stride for k in range(T)]
+                    if all(frame in valid_set for frame in window):
+                        self._samples.append((date, drive, window))
 
     @staticmethod
     def _read_calibration(date_dir: Path) -> dict:
         """Parse KITTI raw calibration files for a date folder."""
         # camera intrinsics
         K = P = None
+        R_rect = np.eye(3, dtype=np.float32)
         with open(date_dir / "calib_cam_to_cam.txt", encoding="utf-8") as f:
             for line in f:
-                if line.startswith("P_rect_02:"):
+                if line.startswith("R_rect_00:"):
+                    R_rect = np.array(line.split()[1:], dtype=np.float32).reshape(3, 3)
+                elif line.startswith("P_rect_02:"):
                     vals = np.array(line.split()[1:], dtype=np.float32).reshape(3, 4)
                     P = vals
                     K = vals[:3, :3]
@@ -156,7 +158,13 @@ class KittiDataset(Dataset):
                     R = np.array(line.split()[1:], dtype=np.float32).reshape(3, 3)
                 elif line.startswith("T:"):
                     t = np.array(line.split()[1:], dtype=np.float32)
-        T_gt = Transform.from_rotation_translation(R, t)
+        if K is None or R is None or t is None:
+            raise ValueError(f"Incomplete KITTI calibration in {date_dir}")
+        # image_02 is rectified and offset from camera 0 by the stereo baseline.
+        # Move P's translation into the extrinsic so projection with K matches P.
+        T_gt = Transform.from_rotation_translation(
+            R_rect @ R, R_rect @ t + np.linalg.solve(K, P[:, 3])
+        )
         return {"K": K, "P": P, "T_gt": T_gt}
 
     # ------------------------------------------------------------------
@@ -183,12 +191,13 @@ class KittiDataset(Dataset):
         # (realistic per-frame exposure/lighting noise); spatial augmentation
         # is disabled by default in this repo's configs, so this only matters
         # if a caller explicitly enables it.
-        if self.deterministic:
-            gen = torch.Generator().manual_seed(self.seed * 1_000_003 + idx)
-            T_decal_lidar, T_decal_cam = self.decalibrator(generator=gen)
-        else:
-            T_decal_lidar, T_decal_cam = self.decalibrator()
-        T_decal = compose_net_decalibration(T_decal_lidar, T_decal_cam, T_gt)
+        gen = (
+            torch.Generator().manual_seed(self.seed * 1_000_003 + idx)
+            if self.deterministic
+            else None
+        )
+        draw = self.decalibrator(generator=gen)
+        T_decal = compose_net_decalibration(*draw, T_gt) if isinstance(draw, tuple) else draw
         T_init = T_decal @ T_gt  # decalibrated extrinsic, shared across the window
 
         imgs, lidar_maps, pcls, metadatas = [], [], [], []

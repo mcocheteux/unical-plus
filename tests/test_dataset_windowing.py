@@ -86,7 +86,7 @@ def test_dropped_window_on_gap(tmp_path: Path):
     fids_used = []
     for date, drive, window in ds._samples:
         fids_used.append(window)
-    assert all(5 not in w for w in fids_used)
+    assert fids_used == [[0, 1, 2], [1, 2, 3], [2, 3, 4], [6, 7, 8], [7, 8, 9]]
 
 
 def test_getitem_window_shapes(tmp_path: Path):
@@ -139,3 +139,42 @@ def test_invalid_sequence_length_raises(tmp_path: Path):
 def test_invalid_frame_stride_raises(tmp_path: Path):
     with pytest.raises(ValueError):
         _dataset(tmp_path, frame_stride=0)
+
+
+def test_strided_window_keeps_samples_across_unsampled_gap(tmp_path: Path):
+    _make_drive(tmp_path, n_frames=5, missing={1, 3})
+    ds = _dataset(tmp_path, sequence_length=3, frame_stride=2)
+    assert [window for _, _, window in ds._samples] == [[0, 2, 4]]
+
+
+def test_calibration_rectification_and_camera_baseline(tmp_path: Path):
+    _write_calib(tmp_path)
+    (tmp_path / "calib_cam_to_cam.txt").write_text(
+        "R_rect_00: 0 -1 0 1 0 0 0 0 1\nP_rect_02: 100 0 32 -20 0 100 32 0 0 0 1 0\n"
+    )
+    (tmp_path / "calib_velo_to_cam.txt").write_text("R: 1 0 0 0 1 0 0 0 1\nT: 1 2 3\n")
+    meta = KittiDataset._read_calibration(tmp_path)
+    np.testing.assert_allclose(meta["T_gt"].translation, [-2.2, 1.0, 3.0])
+    # The new K/extrinsic factorization must reproduce the original rectified P projection.
+    point = np.array([1.0, 2.0, 8.0, 1.0], dtype=np.float32)
+    velo_cam = np.eye(4)
+    velo_cam[:3, 3] = [1.0, 2.0, 3.0]
+    rect = np.eye(4)
+    rect[:3, :3] = [[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]]
+    expected = meta["P"] @ rect @ velo_cam @ point
+    actual = meta["K"] @ (meta["T_gt"].matrix @ point)[:3]
+    np.testing.assert_allclose(actual, expected, atol=1e-4)
+
+
+def test_legacy_relative_generator_remains_deterministic(tmp_path: Path):
+    import torch
+
+    from unical.data.decalibrator import ErrorGenerator
+
+    _make_drive(tmp_path, n_frames=3)
+    ds = _dataset(tmp_path)
+    ds.decalibrator = ErrorGenerator(1.0, 10.0)
+    expected = ds.decalibrator(generator=torch.Generator().manual_seed(1))
+    for _ in range(2):
+        sample = ds[1]
+        np.testing.assert_allclose(sample["metadata"][0]["T_decal"].matrix, expected.matrix)
