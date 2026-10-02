@@ -44,6 +44,10 @@ def main() -> None:
     parser.add_argument("--resume", type=Path)
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
+    if args.protocol != "windows" and args.sequence_length != 1:
+        parser.error("Sequence lengths greater than one require the windows protocol")
+    if args.variant == "main" and args.fusion != "none":
+        parser.error("Exact main has no temporal fusion")
     assert torch.cuda.is_available(), "This runner requires the local CUDA GPU"
     root = Path(unical.__file__).resolve().parents[2]
     overrides = [
@@ -120,9 +124,15 @@ def main() -> None:
             "batch_size",
             "precision",
             "image_normalization",
+            "epochs",
+            "data_dir",
+            "raw_root",
         ]:
             default = "imagenet_rgb" if key == "image_normalization" else None
-            if previous.get(key, default) != getattr(args, key):
+            value = getattr(args, key)
+            if isinstance(value, Path):
+                value = str(value)
+            if previous.get(key, default) != value:
                 raise ValueError(f"Resume configuration changed: {key}")
     manifest = {
         "code_root": str(root),

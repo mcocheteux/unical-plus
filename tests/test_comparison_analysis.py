@@ -58,3 +58,44 @@ def test_incomparable_evaluations_are_rejected(change):
         candidate["records"][0]["id"] = candidate["records"][1]["id"]
     with pytest.raises(ValueError):
         module.compare(reference, candidate, draws=100)
+
+
+def _replicates(errors: list[float]) -> list[dict]:
+    runs = [_results(error) for error in errors]
+    for seed, run in enumerate(runs, start=42):
+        run["training_seed"] = seed
+    return runs
+
+
+def test_replicate_interval_includes_training_seed_variability():
+    result = module.compare_replicates(_replicates([4, 4, 4]), _replicates([1, 2, 3]))
+    assert result["training_seeds"] == [42, 43, 44]
+    assert result["clusters"] == 4
+    metric = result["metrics"]["translation_mae_cm"]
+    assert metric["candidate_minus_reference"] == -2
+    assert metric["paired_95_percent_interval"] == [-3, -1]
+    assert metric["supports_improvement"]
+    assert metric["supports_noninferiority"]
+
+
+@pytest.mark.parametrize("change", ["too_few", "duplicate", "missing", "targets"])
+def test_invalid_replicates_rejected(change):
+    reference, candidate = _replicates([4, 4, 4]), _replicates([1, 2, 3])
+    if change == "too_few":
+        reference.pop()
+        candidate.pop()
+    elif change == "duplicate":
+        candidate[1]["training_seed"] = candidate[0]["training_seed"]
+    elif change == "missing":
+        del candidate[0]["training_seed"]
+    else:
+        for run in [reference[1], candidate[1]]:
+            run["records"][0]["target_translation_m"][0] *= -1
+    with pytest.raises(ValueError):
+        module.compare_replicates(reference, candidate, draws=100)
+
+
+def test_seed_with_reversed_gain_prevents_claim_of_improvement():
+    result = module.compare_replicates(_replicates([4, 4, 4]), _replicates([3, 3, 8]))
+    assert not result["metrics"]["translation_mae_cm"]["supports_improvement"]
+    assert not result["metrics"]["translation_mae_cm"]["supports_noninferiority"]

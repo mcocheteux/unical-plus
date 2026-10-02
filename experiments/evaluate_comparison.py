@@ -34,9 +34,11 @@ def main() -> None:
     parser.add_argument("--stage", type=int, default=5)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
+    training_seed = None
     run_file = args.checkpoint.parent.parent / "run.json"
     if run_file.exists():
         recorded = json.loads(run_file.read_text())["arguments"]
+        training_seed = recorded["seed"]
         expected = recorded.get("image_normalization", "imagenet_rgb")
         if expected != args.image_normalization:
             raise ValueError(f"Checkpoint was trained with image normalization {expected}")
@@ -116,6 +118,7 @@ def main() -> None:
         "code_root": str(root),
         "checkpoint_epoch": state["epoch"],
         "checkpoint_steps": state["global_step"],
+        "training_seed": training_seed,
         "protocol": args.protocol,
         "variant": args.variant,
         "image_normalization": args.image_normalization,
