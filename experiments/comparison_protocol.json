@@ -31,7 +31,6 @@
     "insufficient_evidence": "Do not claim parity or improvement from smoke runs, training loss alone, failure to reject a difference, or an underfit identity-level baseline."
   },
   "remaining": [
-    "Complete expanded asset inventory",
     "Run broader normal-model comparisons to validation stability",
     "Run matched window temporal controls",
     "Replicate decisive results and assess uncertainty"
@@ -48,5 +47,20 @@
     "normalization": "imagenet_rgb for exact-main and primary implementation/temporal controls",
     "training_budget": "Full-corpus T=1 starts with roughly 185,000 backbone frames; report actual optimizer updates and frames for every arm. T=3 has three times the frame exposure at matched anchor epochs. Shortened epoch count reflects corpus size; validation stability remains required, and underfit runs must be extended or diagnosed.",
     "usual_KITTI_budget": "Use all configured usual KITTI drives, selecting epoch count to approximately match full-C2L frame exposure; retain the main architecture, data pipeline and optimizer, with the same recorded warmup override."
+  },
+  "completed_asset_inventory": {
+    "KITTI_C2L": "Full frame and window corpus verified and frozen; source commit d4ba9d7; source frames 19608 train and 2792 test.",
+    "usual_KITTI": {
+      "configured_training_drives": 43,
+      "training_pairs": 15306,
+      "validation_pairs": 574,
+      "nominal_test_pairs": 5177,
+      "source_unpaired_images_skipped_by_original_loader": 4,
+      "loader_configuration_dry_run": "main unchanged, 13 epochs for target exposure 185070 frames, warmup 1 epoch"
+    },
+    "shared_heldout_sequences": [
+      "09",
+      "10"
+    ]
   }
 }
