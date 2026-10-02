@@ -34,6 +34,7 @@ def main() -> None:
     parser.add_argument("--minimum-context-length", type=int, default=3)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--epochs", type=int, default=120)
+    parser.add_argument("--warmup-epochs", type=int)
     parser.add_argument("--batch-size", type=int, default=2)
     parser.add_argument("--precision", choices=["32-true", "bf16-mixed"], default="32-true")
     parser.add_argument(
@@ -48,6 +49,8 @@ def main() -> None:
         parser.error("Sequence lengths greater than one require the windows protocol")
     if args.variant == "main" and args.fusion != "none":
         parser.error("Exact main has no temporal fusion")
+    if args.warmup_epochs is not None and args.warmup_epochs < 0:
+        parser.error("Warmup epochs must be nonnegative")
     assert torch.cuda.is_available(), "This runner requires the local CUDA GPU"
     root = Path(unical.__file__).resolve().parents[2]
     overrides = [
@@ -60,6 +63,8 @@ def main() -> None:
         f"trainer.precision={args.precision}",
         f"trainer.max_epochs={args.epochs}",
     ]
+    if args.warmup_epochs is not None:
+        overrides += [f"model.warmup_epochs={args.warmup_epochs}"]
     if args.variant == "branch":
         overrides += [f"model.temporal.fusion_type={args.fusion}"]
     if args.image_normalization != "imagenet_rgb":
@@ -110,6 +115,11 @@ def main() -> None:
     counts = {s: len(getattr(data, f"{s}_ds")) for s in ["train", "val", "test"]}
     assert min(counts.values()) > 0
     print("Experiment samples:", counts, flush=True)
+    print(
+        "Training schedule:",
+        {"epochs": args.epochs, "warmup_epochs": model.hparams.warmup_epochs},
+        flush=True,
+    )
     if args.dry_run:
         print("Configuration validated; no training launched.", flush=True)
         return
@@ -131,6 +141,7 @@ def main() -> None:
             "precision",
             "image_normalization",
             "epochs",
+            "warmup_epochs",
             "data_dir",
             "raw_root",
         ]:

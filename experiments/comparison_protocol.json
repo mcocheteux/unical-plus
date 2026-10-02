@@ -35,5 +35,18 @@
     "Run broader normal-model comparisons to validation stability",
     "Run matched window temporal controls",
     "Replicate decisive results and assess uncertainty"
-  ]
+  ],
+  "full_corpus_phase": {
+    "data_dir": "/home/mathieu/datasets/kitti_c2l_comparison_full",
+    "source_training_frames": 19608,
+    "training_frames_after_sequence_07_holdout": 18507,
+    "validation_frames": 1101,
+    "test_frames": 2792,
+    "initial_epochs": 10,
+    "warmup_epochs": 1,
+    "validation_period": 1,
+    "normalization": "imagenet_rgb for exact-main and primary implementation/temporal controls",
+    "training_budget": "Full-corpus T=1 starts with roughly 185,000 backbone frames; report actual optimizer updates and frames for every arm. T=3 has three times the frame exposure at matched anchor epochs. Shortened epoch count reflects corpus size; validation stability remains required, and underfit runs must be extended or diagnosed.",
+    "usual_KITTI_budget": "Use all configured usual KITTI drives, selecting epoch count to approximately match full-C2L frame exposure; retain the main architecture, data pipeline and optimizer, with the same recorded warmup override."
+  }
 }
