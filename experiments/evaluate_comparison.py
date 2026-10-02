@@ -27,10 +27,19 @@ def main() -> None:
     parser.add_argument("--fusion", default="none")
     parser.add_argument("--sequence-length", type=int, default=1)
     parser.add_argument("--minimum-context-length", type=int, default=3)
+    parser.add_argument(
+        "--image-normalization", choices=["imagenet_rgb", "mobilevit_bgr"], default="imagenet_rgb"
+    )
     parser.add_argument("--split", choices=["val", "test"], default="test")
     parser.add_argument("--stage", type=int, default=5)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
+    run_file = args.checkpoint.parent.parent / "run.json"
+    if run_file.exists():
+        recorded = json.loads(run_file.read_text())["arguments"]
+        expected = recorded.get("image_normalization", "imagenet_rgb")
+        if expected != args.image_normalization:
+            raise ValueError(f"Checkpoint was trained with image normalization {expected}")
     root = Path(unical.__file__).resolve().parents[2]
     assert torch.cuda.is_available(), "Only local CUDA evaluation is supported"
     torch.set_float32_matmul_precision("high")
@@ -44,6 +53,9 @@ def main() -> None:
     ]
     if args.variant == "branch":
         overrides += [f"model.temporal.fusion_type={args.fusion}"]
+    if args.image_normalization != "imagenet_rgb":
+        assert args.variant == "branch", "Preserve exact main preprocessing"
+        overrides += [f"+data.preprocessor.cfg.image_normalization={args.image_normalization}"]
     if args.protocol == "windows":
         assert args.variant == "branch", "Use branch T=1 as the temporal implementation control"
         overrides += [
@@ -106,6 +118,7 @@ def main() -> None:
         "checkpoint_steps": state["global_step"],
         "protocol": args.protocol,
         "variant": args.variant,
+        "image_normalization": args.image_normalization,
         "stage": args.stage,
         "samples": len(records),
         "clusters": len(set(r["cluster"] for r in records)),

@@ -173,6 +173,14 @@ boundary. For paired T=1/T=3 comparisons, set `data.minimum_context_length=3`
 in both runs so their anchors and published targets match. DataLoader workers
 use spawn to avoid inheriting background thread locks from pretrained loading.
 
+Image preprocessing defaults to the original ImageNet RGB normalization for
+compatibility with existing checkpoints. To test the BGR/[0, 1] input expected
+by pretrained [MobileViT](https://huggingface.co/docs/transformers/model_doc/mobilevit),
+add `+data.preprocessor.cfg.image_normalization=mobilevit_bgr` during training
+and evaluation. This retains the full-image resize and aligned LiDAR projection.
+The controlled experiment scripts accept `--image-normalization mobilevit_bgr`
+for branch runs and record the choice separately from temporal fusion.
+
 ### Evaluate
 
 ```bash

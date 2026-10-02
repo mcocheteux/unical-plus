@@ -8,6 +8,7 @@
     "Exact main on published C2L frames, evaluated on the same common held-out frames and both protocols.",
     "Matched-frame relative protocol control to isolate protocol from capture-day/scene selection.",
     "Branch T=1 frame model to isolate implementation corrections from temporal fusion.",
+    "Branch T=1 frame model with pretrained-compatible MobileViT BGR/[0,1] inputs; isolate preprocessing from temporal gains. Keep legacy preprocessing for exact main and implementation controls.",
     "Branch window T=1/T=3 mean with identical published targets and anchors.",
     "Branch window T=1/T=3 Transformer with identical architecture and capacity.",
     "Branch window T=1/T=3 GRU if needed to assess the alternative temporal architecture."
@@ -31,7 +32,6 @@
   },
   "remaining": [
     "Complete expanded asset inventory",
-    "Finish relative pilot and cross-protocol evaluation",
     "Run broader normal-model comparisons to validation stability",
     "Run matched window temporal controls",
     "Replicate decisive results and assess uncertainty"
