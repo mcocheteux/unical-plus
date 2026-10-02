@@ -152,6 +152,13 @@ def main() -> None:
             if previous.get(key, default) != value:
                 raise ValueError(f"Resume configuration changed: {key}")
     manifest = {
+        "experiment_code_commit": subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=Path(__file__).resolve().parent, text=True
+        ).strip(),
+        "experiment_source_hashes": {
+            name: hashlib.sha256((Path(__file__).resolve().parent / name).read_bytes()).hexdigest()
+            for name in ["run_comparison.py", "relative_c2l.py", "window_c2l.py"]
+        },
         "code_root": str(root),
         "code_commit": subprocess.check_output(
             ["git", "rev-parse", "HEAD"], cwd=root, text=True
