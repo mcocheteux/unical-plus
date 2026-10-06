@@ -1,6 +1,6 @@
 """
 End-to-end smoke test for the KITTI-C2L adapter: builds a synthetic KITTI raw
-drive + a real KITTI-C2L parquet file (via the kitti_c2l package), then runs
+drive + schema-faithful KITTI-C2L parquet metadata, then runs
 one batch all the way through the real UniCal model on CPU (pretrained=None,
 so no network access is needed). This is the "verify on a tiny slice without
 GPU or real data" check for the benchmark pipeline.
@@ -11,13 +11,12 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
+import pyarrow as pa
+import pyarrow.parquet as pq
 import pytest
 import torch
-from kitti_c2l.generate import generate_sequence_rows
-from kitti_c2l.sequence_mapping import SequenceInfo
-from kitti_c2l.stages import STAGES
-from kitti_c2l.writer import write_split
 from PIL import Image
+from scipy.spatial.transform import Rotation
 
 from unical.data.kitti_c2l_dataset import KittiC2LDataModule, KittiC2LDataset
 from unical.data.preprocessor import DataPreprocessor, PreprocessorConfig
@@ -29,6 +28,41 @@ from unical.models.head import SplitRegressionHead
 from unical.models.module import UniCal
 
 IMAGE_SIZE = 64  # (width, height) of the synthetic fixture -- keep tiny & fast
+
+
+def _metadata_rows(sequence: str, date: str, drive: str) -> list[dict]:
+    """Independent known poses in the dataset's centimetre-based Parquet schema."""
+    gt_rotation = Rotation.from_euler("xyz", [0.02, -0.01, 0.03]).as_matrix()
+    gt_translation_m = np.array([-0.02, 0.04, 0.15])
+    rows = []
+    for stage in [1, 2]:
+        for frame in range(6):
+            delta_rotation = Rotation.from_euler(
+                "xyz", [0.2 * stage, -0.1 * (frame + 1), 0.3], degrees=True
+            ).as_matrix()
+            delta_translation_m = np.array([0.005 * (frame + 1), -0.007 * stage, 0.015])
+            rows.append(
+                {
+                    "sample_id": f"{sequence}_{frame:06d}_stage{stage}",
+                    "sequence": sequence,
+                    "raw_date": date,
+                    "raw_drive": drive,
+                    "frame_index": frame,
+                    "raw_frame_index": frame,
+                    "camera_id": 2,
+                    "stage": stage,
+                    "image_width": IMAGE_SIZE,
+                    "image_height": IMAGE_SIZE,
+                    "camera_intrinsics": [40.0, 0.0, 32.0, 0.0, 40.0, 32.0, 0.0, 0.0, 1.0],
+                    "gt_R_cam_from_velo": gt_rotation.reshape(-1).tolist(),
+                    "gt_t_cam_from_velo_cm": (gt_translation_m * 100).tolist(),
+                    "miscal_R_cam_from_velo": (delta_rotation @ gt_rotation).reshape(-1).tolist(),
+                    "miscal_t_cam_from_velo_cm": (
+                        (delta_rotation @ gt_translation_m + delta_translation_m) * 100
+                    ).tolist(),
+                }
+            )
+    return rows
 
 
 def _make_fake_kitti_date(date_dir: Path, drive: str, num_frames: int) -> None:
@@ -82,20 +116,14 @@ def kitti_c2l_fixture(tmp_path: Path) -> tuple[Path, Path]:
     _make_fake_kitti_date(kitti_raw_root / "2011_10_03", drive="0027", num_frames=6)
     _make_fake_kitti_date(kitti_raw_root / "2011_09_30", drive="0033", num_frames=6)
 
-    train_seq = SequenceInfo(
-        sequence="00", date="2011_10_03", drive="0027", start=0, end=5, frame_count=6, split="train"
-    )
-    test_seq = SequenceInfo(
-        sequence="09", date="2011_09_30", drive="0033", start=0, end=5, frame_count=6, split="test"
-    )
-
     data_dir = tmp_path / "data"
-    write_split(
-        generate_sequence_rows(train_seq, kitti_raw_root, stages=STAGES[:2]),
+    data_dir.mkdir()
+    pq.write_table(
+        pa.Table.from_pylist(_metadata_rows("00", "2011_10_03", "0027")),
         data_dir / "train.parquet",
     )
-    write_split(
-        generate_sequence_rows(test_seq, kitti_raw_root, stages=STAGES[:2]),
+    pq.write_table(
+        pa.Table.from_pylist(_metadata_rows("09", "2011_09_30", "0033")),
         data_dir / "test.parquet",
     )
 
@@ -127,6 +155,13 @@ def test_decal_target_reconstructs_miscalibration(kitti_c2l_fixture: tuple[Path,
     meta = sample["metadata"][0]
     reconstructed = meta["T_decal"] @ meta["T_gt"]
     np.testing.assert_allclose(reconstructed.matrix, meta["T_init"].matrix, atol=1e-4)
+    # Check against the independent known error, including centimetre conversion.
+    np.testing.assert_allclose(sample["trans"], [0.02, -0.007, 0.015], atol=1e-6)
+    np.testing.assert_allclose(
+        sample["rot_mat"],
+        Rotation.from_euler("xyz", [0.2, -0.4, 0.3], degrees=True).as_matrix(),
+        atol=1e-6,
+    )
 
 
 def test_datamodule_val_sequence_excluded_from_train(kitti_c2l_fixture: tuple[Path, Path]):
