@@ -47,6 +47,27 @@ def test_stem_inflation_channel_count():
     assert bb.model.conv_stem.convolution.in_channels == 4
 
 
+@pytest.mark.parametrize("img_channels,lidar_channels", [(3, 1), (3, 2), (1, 1), (1, 2)])
+def test_pretrained_stem_preserves_image_response_and_initializes_lidar(
+    img_channels, lidar_channels
+):
+    # Exercise the actual adaptation without downloading pretrained weights.
+    stem = torch.nn.Conv2d(3, 4, 3, padding=1, bias=True)
+    holder = SimpleNamespace(model=SimpleNamespace(conv_stem=SimpleNamespace(convolution=stem)))
+    MobileViTBackbone._inflate_stem(holder, img_channels + lidar_channels, img_channels)
+    adapted = holder.model.conv_stem.convolution
+    image = torch.randn(2, img_channels, 12, 12)
+    pretrained_image = image.expand(-1, 3, -1, -1) if img_channels == 1 else image
+    combined = torch.cat([image, torch.zeros(2, lidar_channels, 12, 12)], dim=1)
+    torch.testing.assert_close(adapted(combined), stem(pretrained_image))
+    torch.testing.assert_close(
+        adapted.weight[:, img_channels:],
+        stem.weight.mean(dim=1, keepdim=True).expand(-1, lidar_channels, -1, -1),
+    )
+    # The three-channel grayscale/depth/intensity input must also be adapted.
+    assert adapted is not stem
+
+
 def test_step_runs_under_bf16_autocast():
     """End-to-end _step under bf16 AMP (guards numpy/geometry bf16 handling)."""
     bb = MobileViTBackbone(image_size=64, pretrained=None)

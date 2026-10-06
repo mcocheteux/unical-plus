@@ -188,6 +188,19 @@ and evaluation. This retains the full-image resize and aligned LiDAR projection.
 The controlled experiment scripts accept `--image-normalization mobilevit_bgr`
 for branch runs and record the choice separately from temporal fusion.
 
+To test the grayscale image plus LiDAR depth/intensity inputs used in the
+paper's strongest KITTI ablation, keep preprocessing and stem channels aligned:
+
+```bash
+uv run python train.py data_dir=/path/to/kitti_raw \
+    data.preprocessor.cfg.grayscale=true data.preprocessor.cfg.add_intensity=true \
+    model.backbone.img_channels=1 model.backbone.lidar_channels=2
+```
+
+The pretrained stem sums its RGB filters for the grayscale channel and uses
+their mean for each LiDAR channel. This input configuration is supported;
+it has not yet reproduced the paper's accuracy.
+
 The comparison evaluator supports `--protocol paper-alpha` for single-frame
 checkpoints on KITTI raw 2011_09_30 drive 28. It requires recorded training
 provenance and rejects models exposed to that drive in training or validation.
