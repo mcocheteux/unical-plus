@@ -76,3 +76,34 @@ def test_step_runs_under_bf16_autocast():
         losses, pred_Ts, target_Ts = model._step(batch)
     assert torch.isfinite(losses["loss"])
     assert len(pred_Ts) == B and len(target_Ts) == B
+
+
+def test_training_retains_loss_and_gradients_without_cpu_metric_path(monkeypatch):
+    backbone = MobileViTBackbone(image_size=64, pretrained=None)
+    head = SplitRegressionHead(
+        in_features=backbone.model.config.neck_hidden_sizes[-1],
+        common_hidden=[],
+        trans_hidden=[32],
+        rot_hidden=[32],
+        rot_dim=6,
+    )
+    model = UniCal(backbone, head, CombinedLoss(RegressionLoss())).eval()
+    single = _fake_batch(size=64)
+    batch = single._replace(
+        img=single.img.unsqueeze(1),
+        lidar_map=single.lidar_map.unsqueeze(1),
+        pcl=[single.pcl],
+        metadata=[single.metadata],
+    )
+    expected, _, _ = model._step(batch)
+
+    def reject_cpu_metric_path(*args):
+        raise AssertionError("Training must not materialize NumPy metric transforms")
+
+    monkeypatch.setattr(model, "_step", reject_cpu_metric_path)
+    monkeypatch.setattr(model, "log_dict", lambda *args, **kwargs: None)
+    loss = model.training_step(batch, 0)
+    assert torch.allclose(loss, expected["loss"])
+    loss.backward()
+    assert torch.isfinite(head.trans_head[-1].weight.grad).all()
+    assert head.trans_head[-1].weight.grad.abs().sum() > 0

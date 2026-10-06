@@ -105,7 +105,10 @@ class UniCal(L.LightningModule):
     # ------------------------------------------------------------------
 
     def training_step(self, batch: Batch, batch_idx: int) -> torch.Tensor:
-        losses, pred_Ts, target_Ts = self._step(batch)
+        # Training needs differentiable losses only. Building CPU-side metric
+        # transforms here synchronizes CUDA and copies predictions/targets that
+        # are discarded; retain that work in validation and test instead.
+        losses = self.loss_fn(self(batch), batch)
         B = batch.img.shape[0]
         self.log_dict(
             {f"train/{k}": v for k, v in losses.items()},
