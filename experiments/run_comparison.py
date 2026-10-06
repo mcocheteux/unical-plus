@@ -20,6 +20,32 @@ from pytorch_lightning.loggers import CSVLogger
 import unical
 
 
+def comparison_checkpoints(output: Path) -> tuple[ModelCheckpoint, ModelCheckpoint]:
+    """Keep validation selection separate from unconditional recovery saves."""
+    best = ModelCheckpoint(
+        dirpath=str(output / "checkpoints"),
+        monitor="val/loss",
+        mode="min",
+        save_top_k=1,
+        save_last=False,
+        filename="unical-{epoch:03d}",
+        auto_insert_metric_name=False,
+    )
+    recovery = ModelCheckpoint(
+        dirpath=str(output / "checkpoints"),
+        monitor=None,
+        save_top_k=1,
+        save_last=True,
+        every_n_epochs=1,
+        save_on_train_epoch_end=True,
+        save_on_exception=True,
+        filename="resume-{epoch:03d}",
+        auto_insert_metric_name=False,
+        enable_version_counter=False,
+    )
+    return best, recovery
+
+
 def main() -> None:
     """Record configuration/code, train on local CUDA, and select on validation only."""
     parser = argparse.ArgumentParser()
@@ -137,7 +163,8 @@ def main() -> None:
     if run_file.exists():
         if not args.resume:
             raise FileExistsError(f"Experiment already exists; use --resume: {run_file}")
-        previous = json.loads(run_file.read_text())["arguments"]
+        previous_manifest = json.loads(run_file.read_text())
+        previous = previous_manifest["arguments"]
         for key in [
             "variant",
             "protocol",
@@ -189,35 +216,36 @@ def main() -> None:
         if args.data_dir
         else {},
     }
+    if args.resume:
+        manifest["resume_history"] = previous_manifest.get("resume_history", []) + [
+            {
+                k: previous_manifest[k]
+                for k in ["experiment_code_commit", "experiment_source_hashes", "arguments"]
+            }
+        ]
     run_file.write_text(json.dumps(manifest, indent=2) + "\n")
     if not args.resume:
         torch.save(model.state_dict(), args.output / "initial_state.pt")
-    checkpoint = ModelCheckpoint(
-        dirpath=str(args.output / "checkpoints"),
-        monitor="val/loss",
-        mode="min",
-        save_top_k=1,
-        save_last=True,
-        filename="unical-{epoch:03d}",
-        auto_insert_metric_name=False,
-    )
+    checkpoint, recovery = comparison_checkpoints(args.output)
     trainer = L.Trainer(
         **OmegaConf.to_container(cfg.trainer, resolve=True),
         check_val_every_n_epoch=min(args.validation_period, args.epochs),
         logger=CSVLogger(str(args.output), name="metrics"),
-        callbacks=[checkpoint, LearningRateMonitor(logging_interval="epoch")],
+        callbacks=[checkpoint, recovery, LearningRateMonitor(logging_interval="epoch")],
         enable_progress_bar=False,
     )
     # These are checkpoints produced locally by this experiment, including resume.
     trainer.fit(model, datamodule=data, ckpt_path=args.resume, weights_only=False)
     optimizer_steps = trainer.global_step
     completed_epochs = trainer.current_epoch
-    results = trainer.test(model, datamodule=data, ckpt_path="best", weights_only=False)
+    results = trainer.test(
+        model, datamodule=data, ckpt_path=checkpoint.best_model_path, weights_only=False
+    )
     manifest.update(
         {
             "status": "trained_and_tested",
             "best_checkpoint": checkpoint.best_model_path,
-            "last_checkpoint": checkpoint.last_model_path,
+            "last_checkpoint": recovery.last_model_path,
             "test_metrics": results,
             "optimizer_steps": optimizer_steps,
             "completed_epochs": completed_epochs,
