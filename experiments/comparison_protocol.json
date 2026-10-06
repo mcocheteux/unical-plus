@@ -100,7 +100,18 @@
     "metric_alignment": "Paper regresses roll/pitch/yaw and labels its metric rotation MAE; report XYZ Euler per-axis MAE separately from geodesic rotation error. Do not equate geodesic degrees with the paper table without establishing its definition.",
     "scope": "C2L-vs-usual comparisons on common 09/10 establish internal dataset parity and absolute accuracy quality, but are not exact paper split-alpha reproductions. The C2L training corpus contains sequence 08 (raw test-alpha drive 28); exclude that sequence from a separate paper-compatible C2L training arm before using drive 28 as an unseen test.",
     "success_target": "Demonstrate useful near-paper-level calibration as well as noninferiority to the reproduced usual-KITTI baseline. Identity-level parity is insufficient.",
-    "reimplementation_differences": "Current UniCal++ is unofficial and uses RGB, a 6D rotation representation and modified heads; original paper describes roll/pitch/yaw regression and its strongest ablation uses grayscale plus LiDAR intensity."
+    "reimplementation_differences": "Current UniCal++ is unofficial and uses RGB, a 6D rotation representation and modified heads; original paper describes roll/pitch/yaw regression and its strongest ablation uses grayscale plus LiDAR intensity.",
+    "evaluation_guard": "Paper-alpha requires recorded training provenance. Reject C2L raw drive 2011_09_30/0028 regardless of sequence label, changed training metadata, missing historical metadata hashes, or usual KITTI train/validation exposure. CPU dry-run verifies 5177 test pairs at the training resolution.",
+    "separate_c2l_view": {
+      "excluded_training_sequences": [
+        "08"
+      ],
+      "training_frames_stage5": 14436,
+      "validation_frames_stage5": 1101,
+      "heldout_frames_stage5": 2792,
+      "heldout_metadata": "Byte-identical to the complete frozen C2L snapshot.",
+      "scope": "Makes paper-alpha test drive unseen; training captures still differ from paper alpha, so this is not an exact paper reproduction."
+    }
   },
   "learning_diagnostics": {
     "purpose": "Distinguish label/gradient pipeline failures from weak optimization; use training-only samples, never infer benchmark accuracy from micro-overfit.",
@@ -125,6 +136,11 @@
       "interpretation": "Pipeline can fit real training targets; normalization and head LR both changed, so this diagnostic does not identify their separate causal effects or establish held-out performance."
     },
     "queued_control": "Full C2L BGR with head LR 3e-5 versus 1e-3, same backbone LR 3e-5, same initialization seed, inputs, targets, precision, loss, and frame budget.",
-    "temporal_phase": "Test paired T=1/T=3 mean and capacity-matched Transformer using BGR input and head/temporal LR 1e-3, backbone LR 3e-5. All temporal arms share those settings; record these implementation/training changes separately from temporal gains."
+    "temporal_phase": "Test paired T=1/T=3 mean and capacity-matched Transformer using BGR input and head/temporal LR 1e-3, backbone LR 3e-5. All temporal arms share those settings; record these implementation/training changes separately from temporal gains.",
+    "followup_accuracy_controls": [
+      "Same BGR/head LR 1e-3 branch implementation trained on usual KITTI; compare to full C2L branch arm on identical held-out native and relative protocols.",
+      "C2L without sequence 08, native and online usual perturbations as separate training arms; evaluate the unseen paper-alpha drive and common C2L holdouts.",
+      "Use 185070 target training frames with whole-epoch rounding recorded in manifests. Keep paper-alpha split differences explicit; these first-seed controls do not establish three-seed publication readiness."
+    ]
   }
 }

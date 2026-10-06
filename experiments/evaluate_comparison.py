@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 from pathlib import Path
 
 import numpy as np
+import pyarrow.parquet as pq
 import torch
 from fast_c2l import configure_loading
 from hydra import compose, initialize_config_dir
@@ -17,13 +19,39 @@ import unical
 from unical.utils.transform import rotation_6d_to_matrix
 
 
+def guard_paper_alpha_training(manifest: dict) -> None:
+    """Reject drive-28 train/validation exposure before claiming an unseen alpha test."""
+    recorded = manifest.get("arguments", {})
+    if recorded.get("protocol") == "usual":
+        splits = manifest["configuration"]["experiment"]["splits"]
+        for split in ["train", "val"]:
+            if any(
+                date == "2011_09_30" and 28 in map(int, drives) for date, drives in splits[split]
+            ):
+                raise ValueError("Paper-alpha test drive 28 appeared in training/validation")
+        return
+    if recorded.get("protocol") not in ["frames", "relative", "windows"]:
+        raise ValueError("Paper-alpha evaluation requires recorded training provenance")
+    expected_hash = manifest.get("dataset_hashes", {}).get("train.parquet")
+    if not recorded.get("data_dir") or not expected_hash:
+        raise ValueError("Paper-alpha evaluation requires recorded training metadata and its hash")
+    path = Path(recorded["data_dir"]) / "train.parquet"
+    if hashlib.sha256(path.read_bytes()).hexdigest() != expected_hash:
+        raise ValueError("Recorded training metadata changed")
+    rows = pq.read_table(path, columns=["raw_date", "raw_drive"]).to_pylist()
+    if any(row["raw_date"] == "2011_09_30" and int(row["raw_drive"]) == 28 for row in rows):
+        raise ValueError("Paper-alpha drive 28 is C2L sequence 08; exclude it before training")
+
+
 def main() -> None:
     """Evaluate a saved main/branch model against a named common test protocol."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--checkpoint", type=Path, required=True)
     parser.add_argument("--data-dir", type=Path, required=True)
     parser.add_argument("--raw-root", default="/home/mathieu/datasets/kitti_raw")
-    parser.add_argument("--protocol", choices=["frames", "relative", "windows"], required=True)
+    parser.add_argument(
+        "--protocol", choices=["frames", "relative", "windows", "paper-alpha"], required=True
+    )
     parser.add_argument("--variant", choices=["main", "branch"], required=True)
     parser.add_argument("--fusion", default="none")
     parser.add_argument("--sequence-length", type=int, default=1)
@@ -36,31 +64,46 @@ def main() -> None:
     parser.add_argument("--split", choices=["val", "test"], default="test")
     parser.add_argument("--stage", type=int, default=5)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
     training_seed = None
+    training_manifest = {}
     run_file = args.checkpoint.parent.parent / "run.json"
     if run_file.exists():
-        recorded = json.loads(run_file.read_text())["arguments"]
+        training_manifest = json.loads(run_file.read_text())
+        recorded = training_manifest["arguments"]
         training_seed = recorded["seed"]
         expected = recorded.get("image_normalization", "imagenet_rgb")
         if expected != args.image_normalization:
             raise ValueError(f"Checkpoint was trained with image normalization {expected}")
         if recorded.get("image_size", 512) != args.image_size:
             raise ValueError("Evaluation image size must match training")
+    if args.protocol == "paper-alpha":
+        if args.split != "test" or args.sequence_length != 1:
+            parser.error("Paper-alpha currently evaluates single-frame models on its test split")
+        if training_manifest.get("arguments", {}).get("sequence_length", 1) != 1:
+            parser.error("Use the matched window protocol for models trained with temporal inputs")
+        guard_paper_alpha_training(training_manifest)
     root = Path(unical.__file__).resolve().parents[2]
-    assert torch.cuda.is_available(), "Only local CUDA evaluation is supported"
+    if not args.dry_run:
+        assert torch.cuda.is_available(), "Only local CUDA evaluation is supported"
     torch.set_float32_matmul_precision("high")
     overrides = [
-        "data=kitti_c2l",
-        f"data.data_dir={args.data_dir}",
-        f"data.kitti_raw_root={args.raw_root}",
         "data.batch_size=2",
         f"data.num_workers={args.num_workers}",
         f"data.preprocessor.cfg.width={args.image_size}",
         f"data.preprocessor.cfg.height={args.image_size}",
         f"model.backbone.image_size={args.image_size}",
-        f"data.stages=[{args.stage}]",
     ]
+    if args.protocol == "paper-alpha":
+        overrides += ["data=kitti", "experiment=default", f"data_dir={args.raw_root}"]
+    else:
+        overrides += [
+            "data=kitti_c2l",
+            f"data.data_dir={args.data_dir}",
+            f"data.kitti_raw_root={args.raw_root}",
+            f"data.stages=[{args.stage}]",
+        ]
     if args.variant == "branch":
         overrides += [f"model.temporal.fusion_type={args.fusion}"]
     if args.image_normalization != "imagenet_rgb":
@@ -90,6 +133,21 @@ def main() -> None:
     if args.num_workers:
         configure_loading(dm, recorded.get("max_loss_points", 0) if run_file.exists() else 0)
     dm.setup("test")
+    if args.dry_run:
+        dataset = dm.val_ds if args.split == "val" else dm.test_ds
+        sample = dataset[0]
+        print(
+            json.dumps(
+                {
+                    "protocol": args.protocol,
+                    "split": args.split,
+                    "samples": len(dataset),
+                    "image_shape": list(sample["img"].shape),
+                },
+                indent=2,
+            )
+        )
+        return
     model = instantiate(cfg.model).cuda().eval()
     assert hasattr(model, "temporal") == (args.variant == "branch"), "Wrong model checkout imported"
     state = torch.load(args.checkpoint, map_location="cpu", weights_only=False)
@@ -113,6 +171,11 @@ def main() -> None:
             initial_euler_error = np.abs((target_euler + 180) % 360 - 180).mean(1)
             metadata = batch.metadata[-1] if args.variant == "branch" else batch.metadata
             for i, m in enumerate(metadata):
+                if args.protocol == "paper-alpha":
+                    m = m | {
+                        "sequence": "raw_2011_09_30_0028",
+                        "frame_index": int(Path(m["img_name"]).stem),
+                    }
                 group = m.get("window_id") or f"{m['sequence']}_block{int(m['frame_index']) // 30}"
                 records.append(
                     {

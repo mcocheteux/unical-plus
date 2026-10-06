@@ -188,6 +188,17 @@ and evaluation. This retains the full-image resize and aligned LiDAR projection.
 The controlled experiment scripts accept `--image-normalization mobilevit_bgr`
 for branch runs and record the choice separately from temporal fusion.
 
+The comparison evaluator supports `--protocol paper-alpha` for single-frame
+checkpoints on KITTI raw 2011_09_30 drive 28. It requires recorded training
+provenance and rejects models exposed to that drive in training or validation.
+C2L sequence 08 contains this drive. To derive a separate frozen training view,
+run `experiments/freeze_dataset.py` with `--exclude-training-sequences 08`,
+using the complete frozen snapshot as `--source` and a new `--output` directory.
+The view preserves test metadata byte-for-byte and retains sequence 07 for
+validation. Retrain on that view before evaluating paper alpha; its training
+captures still differ from the paper's original split. The evaluator's
+`--dry-run` checks the selected dataset on CPU without loading model weights.
+
 ### Evaluate
 
 ```bash

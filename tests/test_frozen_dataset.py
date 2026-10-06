@@ -92,3 +92,45 @@ def test_raw_frame_overlap_is_rejected(corpus):
         pq.write_table(pa.Table.from_pylist(rows), source / name)
     with pytest.raises(ValueError, match="train/test frames overlap"):
         module.freeze(source, raw, output)
+
+
+def test_training_view_excludes_whole_sequence_and_keeps_test_bytes(corpus):
+    source, raw, frozen = corpus
+    drive = raw / "2011_09_30/2011_09_30_drive_0003_sync"
+    for relative in [
+        ".unical_complete.json",
+        "image_02/data/0000000000.png",
+        "velodyne_points/data/0000000000.bin",
+    ]:
+        path = drive / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("fixture")
+    for name in ["train.parquet", "windows_train.parquet"]:
+        rows = pq.read_table(source / name).to_pylist()
+        extra = [
+            dict(row, sequence="08", raw_drive="0003") for row in rows if row["sequence"] == "04"
+        ]
+        if name.startswith("windows_"):
+            for row in extra:
+                row["window_id"] = f"08-{row['stage']}"
+        pq.write_table(pa.Table.from_pylist(rows + extra), source / name)
+    module.freeze(source, raw, frozen)
+    output = frozen.parent / "without-08"
+    manifest = module.derive_training_subset(frozen, output, ["08"])
+    assert manifest["unique_frames"] == {"train": 2, "test": 1}
+    assert module.derive_training_subset(frozen, output, ["08"]) == manifest
+    for name in ["train.parquet", "windows_train.parquet"]:
+        assert set(pq.read_table(output / name)["sequence"].to_pylist()) == {"04", "07"}
+    for name in ["test.parquet", "windows_test.parquet"]:
+        assert (frozen / name).read_bytes() == (output / name).read_bytes()
+    (output / "train.parquet").write_bytes(b"mutated")
+    with pytest.raises(ValueError, match="subset metadata changed"):
+        module.derive_training_subset(frozen, output, ["08"])
+
+
+def test_training_view_cannot_remove_validation_or_invent_sequence(corpus):
+    source, raw, frozen = corpus
+    module.freeze(source, raw, frozen)
+    for sequence, message in [("07", "Retain sequence 07"), ("08", "must exist")]:
+        with pytest.raises(ValueError, match=message):
+            module.derive_training_subset(frozen, frozen.parent / "subset", [sequence])
