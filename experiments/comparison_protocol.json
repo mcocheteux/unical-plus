@@ -62,5 +62,18 @@
       "09",
       "10"
     ]
+  },
+  "optimized_phase": {
+    "requested_by_user": "Improve speed and efficiency while retaining the two goals: sequence UniCal and C2L versus usual KITTI validation.",
+    "image_size": 256,
+    "max_loss_points": 8192,
+    "precision": "bf16-mixed",
+    "batch_size": 8,
+    "num_workers": 4,
+    "pin_memory": true,
+    "point_subsampling": "Deterministic, evenly spaced loss-point subset after dense input-map construction. Targets and full input LiDAR map are unchanged.",
+    "fairness": "Apply identical optimized settings to both dataset training arms and all matched temporal controls. Restart optimized arms from initialization; never mix resolutions/precision/point caps within a reported arm. Preserve original 512px checkpoints as explicitly interrupted references.",
+    "initial_benchmark": "Main single frame approximately 82 anchors/s; original short benchmark approximately 16 anchors/s. Three-frame control approximately 37 anchors/s (110 backbone frames/s), finite losses, about 2.7GiB peak GPU allocation. Confirm sustained epoch throughput and accuracy.",
+    "publication_decision": "A reference-dataset claim requires successful useful calibration, not merely parity at identity-level error; validation stability and three-seed paired held-out tests still required."
   }
 }

@@ -8,6 +8,7 @@ from pathlib import Path
 
 import numpy as np
 import torch
+from fast_c2l import configure_loading
 from hydra import compose, initialize_config_dir
 from hydra.utils import instantiate
 from scipy.spatial.transform import Rotation
@@ -27,6 +28,8 @@ def main() -> None:
     parser.add_argument("--fusion", default="none")
     parser.add_argument("--sequence-length", type=int, default=1)
     parser.add_argument("--minimum-context-length", type=int, default=3)
+    parser.add_argument("--image-size", type=int, default=512)
+    parser.add_argument("--num-workers", type=int, default=0)
     parser.add_argument(
         "--image-normalization", choices=["imagenet_rgb", "mobilevit_bgr"], default="imagenet_rgb"
     )
@@ -42,6 +45,8 @@ def main() -> None:
         expected = recorded.get("image_normalization", "imagenet_rgb")
         if expected != args.image_normalization:
             raise ValueError(f"Checkpoint was trained with image normalization {expected}")
+        if recorded.get("image_size", 512) != args.image_size:
+            raise ValueError("Evaluation image size must match training")
     root = Path(unical.__file__).resolve().parents[2]
     assert torch.cuda.is_available(), "Only local CUDA evaluation is supported"
     torch.set_float32_matmul_precision("high")
@@ -50,7 +55,10 @@ def main() -> None:
         f"data.data_dir={args.data_dir}",
         f"data.kitti_raw_root={args.raw_root}",
         "data.batch_size=2",
-        "data.num_workers=0",
+        f"data.num_workers={args.num_workers}",
+        f"data.preprocessor.cfg.width={args.image_size}",
+        f"data.preprocessor.cfg.height={args.image_size}",
+        f"model.backbone.image_size={args.image_size}",
         f"data.stages=[{args.stage}]",
     ]
     if args.variant == "branch":
@@ -79,6 +87,8 @@ def main() -> None:
     with initialize_config_dir(config_dir=str(root / "configs"), version_base="1.3"):
         cfg = compose(config_name="train", overrides=overrides)
     dm = instantiate(cfg.data)
+    if args.num_workers:
+        configure_loading(dm, recorded.get("max_loss_points", 0) if run_file.exists() else 0)
     dm.setup("test")
     model = instantiate(cfg.model).cuda().eval()
     assert hasattr(model, "temporal") == (args.variant == "branch"), "Wrong model checkout imported"
@@ -128,6 +138,7 @@ def main() -> None:
         "protocol": args.protocol,
         "variant": args.variant,
         "image_normalization": args.image_normalization,
+        "image_size": args.image_size,
         "stage": args.stage,
         "samples": len(records),
         "clusters": len(set(r["cluster"] for r in records)),

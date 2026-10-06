@@ -7,10 +7,12 @@ import hashlib
 import json
 import math
 import subprocess
+import time
 from pathlib import Path
 
 import pytorch_lightning as L
 import torch
+from fast_c2l import configure_loading
 from hydra import compose, initialize_config_dir
 from hydra.utils import instantiate
 from omegaconf import OmegaConf
@@ -18,6 +20,30 @@ from pytorch_lightning.callbacks import LearningRateMonitor, ModelCheckpoint
 from pytorch_lightning.loggers import CSVLogger
 
 import unical
+
+
+class ThroughputTimer(L.Callback):
+    """Measure steady-state end-to-end batches after loader/CUDA warmup."""
+
+    def __init__(self, warmup=8):
+        self.warmup = warmup
+        self.batches = 0
+        self.start = None
+        self.elapsed = None
+        self.losses = []
+
+    def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
+        self.batches += 1
+        self.losses.append(outputs["loss"].detach())
+        if self.batches == self.warmup:
+            torch.cuda.synchronize()
+            torch.cuda.reset_peak_memory_stats()
+            self.start = time.perf_counter()
+
+    def on_train_end(self, trainer, pl_module):
+        torch.cuda.synchronize()
+        self.elapsed = time.perf_counter() - self.start
+        assert torch.isfinite(torch.stack(self.losses)).all(), "Nonfinite benchmark losses"
 
 
 def comparison_checkpoints(output: Path) -> tuple[ModelCheckpoint, ModelCheckpoint]:
@@ -64,7 +90,14 @@ def main() -> None:
     parser.add_argument("--warmup-epochs", type=int)
     parser.add_argument("--target-training-frames", type=int)
     parser.add_argument("--batch-size", type=int, default=2)
-    parser.add_argument("--precision", choices=["32-true", "bf16-mixed"], default="32-true")
+    parser.add_argument(
+        "--precision", choices=["32-true", "bf16-mixed", "16-mixed"], default="32-true"
+    )
+    parser.add_argument("--image-size", type=int, default=512)
+    parser.add_argument("--max-loss-points", type=int, default=0)
+    parser.add_argument("--num-workers", type=int, default=0)
+    parser.add_argument("--pin-memory", action="store_true")
+    parser.add_argument("--benchmark-steps", type=int, default=0)
     parser.add_argument(
         "--image-normalization", choices=["imagenet_rgb", "mobilevit_bgr"], default="imagenet_rgb"
     )
@@ -73,6 +106,12 @@ def main() -> None:
     parser.add_argument("--resume", type=Path)
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
+    if args.image_size < 32 or args.image_size % 32:
+        parser.error("Image size must be a positive multiple of 32")
+    if args.max_loss_points < 0 or args.num_workers < 0:
+        parser.error("Point cap and worker count must be nonnegative")
+    if args.benchmark_steps and args.benchmark_steps <= 8:
+        parser.error("Benchmark needs more than eight warmup steps")
     if args.protocol != "windows" and args.sequence_length != 1:
         parser.error("Sequence lengths greater than one require the windows protocol")
     if args.variant == "main" and args.fusion != "none":
@@ -88,7 +127,11 @@ def main() -> None:
         f"seed={args.seed}",
         f"log_dir={args.output}",
         f"data.batch_size={args.batch_size}",
-        "data.num_workers=0",
+        f"data.num_workers={args.num_workers}",
+        f"data.pin_memory={str(args.pin_memory).lower()}",
+        f"data.preprocessor.cfg.width={args.image_size}",
+        f"data.preprocessor.cfg.height={args.image_size}",
+        f"model.backbone.image_size={args.image_size}",
         "trainer.accelerator=gpu",
         f"trainer.precision={args.precision}",
         f"trainer.max_epochs={args.epochs}",
@@ -139,6 +182,8 @@ def main() -> None:
     L.seed_everything(args.seed, workers=True)
     torch.set_float32_matmul_precision("high")
     data = instantiate(cfg.data)
+    if args.max_loss_points or args.num_workers or args.pin_memory or args.benchmark_steps:
+        configure_loading(data, args.max_loss_points, args.benchmark_steps * args.batch_size)
     data.setup()
     model = instantiate(cfg.model)
     assert hasattr(model, "temporal") == (args.variant == "branch"), "Wrong code checkout imported"
@@ -181,8 +226,18 @@ def main() -> None:
             "target_training_frames",
             "data_dir",
             "raw_root",
+            "image_size",
+            "max_loss_points",
+            "num_workers",
+            "pin_memory",
         ]:
-            default = "imagenet_rgb" if key == "image_normalization" else None
+            default = {
+                "image_normalization": "imagenet_rgb",
+                "image_size": 512,
+                "max_loss_points": 0,
+                "num_workers": 0,
+                "pin_memory": False,
+            }.get(key)
             value = getattr(args, key)
             if isinstance(value, Path):
                 value = str(value)
@@ -194,7 +249,7 @@ def main() -> None:
         ).strip(),
         "experiment_source_hashes": {
             name: hashlib.sha256((Path(__file__).resolve().parent / name).read_bytes()).hexdigest()
-            for name in ["run_comparison.py", "relative_c2l.py", "window_c2l.py"]
+            for name in ["run_comparison.py", "relative_c2l.py", "window_c2l.py", "fast_c2l.py"]
         },
         "code_root": str(root),
         "code_commit": subprocess.check_output(
@@ -226,6 +281,39 @@ def main() -> None:
     run_file.write_text(json.dumps(manifest, indent=2) + "\n")
     if not args.resume:
         torch.save(model.state_dict(), args.output / "initial_state.pt")
+    if args.benchmark_steps:
+        timer = ThroughputTimer()
+        trainer = L.Trainer(
+            **OmegaConf.to_container(cfg.trainer, resolve=True),
+            max_steps=args.benchmark_steps,
+            limit_val_batches=0,
+            num_sanity_val_steps=0,
+            logger=False,
+            callbacks=[timer],
+            enable_checkpointing=False,
+            enable_progress_bar=False,
+            enable_model_summary=False,
+        )
+        trainer.fit(model, datamodule=data)
+        measured = timer.batches - timer.warmup
+        manifest.update(
+            status="benchmark_completed",
+            benchmark={
+                "measured_batches": measured,
+                "seconds": timer.elapsed,
+                "seconds_per_batch": timer.elapsed / measured,
+                "anchors_per_second": measured * args.batch_size / timer.elapsed,
+                "backbone_frames_per_second": measured
+                * args.batch_size
+                * args.sequence_length
+                / timer.elapsed,
+                "peak_gpu_memory_mb": torch.cuda.max_memory_allocated() / 1024**2,
+                "finite_losses": True,
+            },
+        )
+        run_file.write_text(json.dumps(manifest, indent=2) + "\n")
+        print(json.dumps(manifest["benchmark"], indent=2), flush=True)
+        return
     checkpoint, recovery = comparison_checkpoints(args.output)
     trainer = L.Trainer(
         **OmegaConf.to_container(cfg.trainer, resolve=True),

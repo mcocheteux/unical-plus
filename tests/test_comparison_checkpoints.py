@@ -2,6 +2,7 @@
 
 import importlib.util
 import signal
+import sys
 from pathlib import Path
 
 import pytest
@@ -12,6 +13,7 @@ from torch.utils.data import DataLoader, TensorDataset
 spec = importlib.util.spec_from_file_location(
     "run_comparison", Path(__file__).resolve().parents[1] / "experiments/run_comparison.py"
 )
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "experiments"))
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
 
