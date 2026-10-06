@@ -44,7 +44,7 @@
     "initial_epochs": 10,
     "warmup_epochs": 1,
     "validation_period": 1,
-    "normalization": "imagenet_rgb for exact-main and primary implementation/temporal controls",
+    "normalization": "ImageNet RGB for exact-main and legacy preprocessing controls; MobileViT BGR/[0,1] for optimized branch and matched temporal comparisons.",
     "training_budget": "Full-corpus T=1 starts with roughly 185,000 backbone frames; report actual optimizer updates and frames for every arm. T=3 has three times the frame exposure at matched anchor epochs. Shortened epoch count reflects corpus size; validation stability remains required, and underfit runs must be extended or diagnosed.",
     "usual_KITTI_budget": "Use all configured usual KITTI drives, selecting epoch count to approximately match full-C2L frame exposure; retain the main architecture, data pipeline and optimizer, with the same recorded warmup override."
   },
@@ -136,7 +136,7 @@
       "interpretation": "Pipeline can fit real training targets; normalization and head LR both changed, so this diagnostic does not identify their separate causal effects or establish held-out performance."
     },
     "queued_control": "Full C2L BGR with head LR 3e-5 versus 1e-3, same backbone LR 3e-5, same initialization seed, inputs, targets, precision, loss, and frame budget.",
-    "temporal_phase": "Test paired T=1/T=3 mean and capacity-matched Transformer using BGR input and head/temporal LR 1e-3, backbone LR 3e-5. All temporal arms share those settings; record these implementation/training changes separately from temporal gains.",
+    "temporal_phase": "Primary matched T=1/T=3 mean controls use BGR with the original uniform LR 3e-5. Retain BGR/head-temporal LR 1e-3 mean and capacity-matched Transformer arms as separate tradeoff ablations. Both members of each temporal pair share settings; report implementation changes separately from temporal gains.",
     "followup_accuracy_controls": [
       "Same BGR/head LR 1e-3 branch implementation trained on usual KITTI; compare to full C2L branch arm on identical held-out native and relative protocols.",
       "C2L without sequence 08, native and online usual perturbations as separate training arms; evaluate the unseen paper-alpha drive and common C2L holdouts.",
@@ -165,6 +165,25 @@
       ],
       "ideal_same_axis_gain": 1,
       "interpretation": "Depth maps visibly respond to the synthetic corrections while predictions are weakly sensitive. This diagnoses weak input-dependent calibration learning in this checkpoint, without isolating optimization, representation or dataset causality."
+    },
+    "head_lr_screening": {
+      "selection_basis": "Completed C2L validation curves show faster translation learning but rotation regressions exceeding the 10% margin at several epochs. Preserve uniform rate as primary balanced baseline before starting temporal controls. Test results are observational confirmation; checkpoints remain validation-selected.",
+      "heldout_seed42_observation": {
+        "native_translation_cm": [
+          4.206011376655887,
+          3.726527340208476
+        ],
+        "native_geodesic_rotation_deg": [
+          0.6075319662965543,
+          0.7572201088099346
+        ],
+        "order": [
+          "uniform_lr",
+          "head_lr_1e_minus3"
+        ],
+        "paired_rotation_noninferiority": false
+      },
+      "queue_change": "Preserve the active main relative-protocol run. Prioritize healthy branch usual-KITTI uniform-rate comparison, then uniform-rate T=1/T=3 mean. Retain previous legacy-preprocessing and higher-head-rate temporal ablations and paper-test followups."
     }
   }
 }
