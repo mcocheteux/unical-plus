@@ -75,5 +75,31 @@
     "fairness": "Apply identical optimized settings to both dataset training arms and all matched temporal controls. Restart optimized arms from initialization; never mix resolutions/precision/point caps within a reported arm. Preserve original 512px checkpoints as explicitly interrupted references.",
     "initial_benchmark": "Main single frame approximately 82 anchors/s; original short benchmark approximately 16 anchors/s. Three-frame control approximately 37 anchors/s (110 backbone frames/s), finite losses, about 2.7GiB peak GPU allocation. Confirm sustained epoch throughput and accuracy.",
     "publication_decision": "A reference-dataset claim requires successful useful calibration, not merely parity at identity-level error; validation stability and three-seed paired held-out tests still required."
+  },
+  "published_accuracy_reference": {
+    "source": "https://arxiv.org/html/2304.09715",
+    "paper": "UniCal: a Single-Branch Transformer-Based Model for Camera-to-LiDAR Calibration and Validation",
+    "table": "II",
+    "primary_reference": {
+      "split": "alpha: train KITTI raw 2011_09_26, val drives 5/70, test 2011_09_30 drive 28",
+      "translation_mae_cm": 0.89,
+      "reported_rotation_mae_degrees": 0.04
+    },
+    "secondary_split_dependent_references": [
+      {
+        "split": "beta",
+        "translation_mae_cm": 0.33,
+        "reported_rotation_mae_degrees": 0.03
+      },
+      {
+        "split": "delta",
+        "translation_mae_cm": 0.8,
+        "reported_rotation_mae_degrees": 0.04
+      }
+    ],
+    "metric_alignment": "Paper regresses roll/pitch/yaw and labels its metric rotation MAE; report XYZ Euler per-axis MAE separately from geodesic rotation error. Do not equate geodesic degrees with the paper table without establishing its definition.",
+    "scope": "C2L-vs-usual comparisons on common 09/10 establish internal dataset parity and absolute accuracy quality, but are not exact paper split-alpha reproductions. The C2L training corpus contains sequence 08 (raw test-alpha drive 28); exclude that sequence from a separate paper-compatible C2L training arm before using drive 28 as an unseen test.",
+    "success_target": "Demonstrate useful near-paper-level calibration as well as noninferiority to the reproduced usual-KITTI baseline. Identity-level parity is insufficient.",
+    "reimplementation_differences": "Current UniCal++ is unofficial and uses RGB, a 6D rotation representation and modified heads; original paper describes roll/pitch/yaw regression and its strongest ablation uses grayscale plus LiDAR intensity."
   }
 }

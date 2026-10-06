@@ -105,6 +105,12 @@ def main() -> None:
             rel = Rotation.from_matrix(R).inv() * Rotation.from_matrix(target_R)
             angles = np.degrees(rel.magnitude())
             initial_angles = np.degrees(Rotation.from_matrix(target_R).magnitude())
+            # The UniCal paper regresses roll/pitch/yaw and reports rotation MAE.
+            # Keep this per-axis metric distinct from geodesic SO(3) error.
+            predicted_euler = Rotation.from_matrix(R).as_euler("xyz", degrees=True)
+            target_euler = Rotation.from_matrix(target_R).as_euler("xyz", degrees=True)
+            euler_error = np.abs((predicted_euler - target_euler + 180) % 360 - 180).mean(1)
+            initial_euler_error = np.abs((target_euler + 180) % 360 - 180).mean(1)
             metadata = batch.metadata[-1] if args.variant == "branch" else batch.metadata
             for i, m in enumerate(metadata):
                 group = m.get("window_id") or f"{m['sequence']}_block{int(m['frame_index']) // 30}"
@@ -117,8 +123,10 @@ def main() -> None:
                         "sequence": m["sequence"],
                         "translation_mae_cm": float(np.mean(np.abs(t[i] - target_t[i]) * 100)),
                         "rotation_degrees": float(angles[i]),
+                        "rotation_euler_mae_degrees": float(euler_error[i]),
                         "initial_translation_mae_cm": float(np.mean(np.abs(target_t[i]) * 100)),
                         "initial_rotation_degrees": float(initial_angles[i]),
+                        "initial_rotation_euler_mae_degrees": float(initial_euler_error[i]),
                     }
                 )
     keys = [
@@ -126,6 +134,8 @@ def main() -> None:
         "rotation_degrees",
         "initial_translation_mae_cm",
         "initial_rotation_degrees",
+        "rotation_euler_mae_degrees",
+        "initial_rotation_euler_mae_degrees",
     ]
     values = np.array([[r[k] for k in keys] for r in records])
     assert np.isfinite(values).all() and len(records) > 0
