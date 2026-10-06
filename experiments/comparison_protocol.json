@@ -141,6 +141,30 @@
       "Same BGR/head LR 1e-3 branch implementation trained on usual KITTI; compare to full C2L branch arm on identical held-out native and relative protocols.",
       "C2L without sequence 08, native and online usual perturbations as separate training arms; evaluate the unseen paper-alpha drive and common C2L holdouts.",
       "Use 185070 target training frames with whole-epoch rounding recorded in manifests. Keep paper-alpha split differences explicit; these first-seed controls do not establish three-seed publication readiness."
-    ]
+    ],
+    "completed_input_sensitivity": {
+      "scope": "CPU FP32 evaluation of the completed 10-epoch main C2L 256px checkpoint; eight evenly spaced training scenes, 13 camera-frame pose settings per scene. Training-only diagnostic, not benchmark accuracy.",
+      "translation_sweep_m": [
+        -0.1,
+        0.1
+      ],
+      "rotation_sweep_degrees": [
+        -1,
+        1
+      ],
+      "mean_fraction_changed_depth_pixels": 0.2492106780409813,
+      "mean_same_axis_prediction_gain_translation_xyz": [
+        0.0004143943078815937,
+        0.001599972601979971,
+        0.0006066728383302689
+      ],
+      "mean_same_axis_prediction_gain_euler_xyz": [
+        0.02421325124016309,
+        -2.7428862843118266e-05,
+        0.004065945590970464
+      ],
+      "ideal_same_axis_gain": 1,
+      "interpretation": "Depth maps visibly respond to the synthetic corrections while predictions are weakly sensitive. This diagnoses weak input-dependent calibration learning in this checkpoint, without isolating optimization, representation or dataset causality."
+    }
   }
 }
