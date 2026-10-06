@@ -88,6 +88,8 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--epochs", type=int, default=120)
     parser.add_argument("--warmup-epochs", type=int)
+    parser.add_argument("--head-lr", type=float)
+    parser.add_argument("--temporal-lr", type=float)
     parser.add_argument("--target-training-frames", type=int)
     parser.add_argument("--batch-size", type=int, default=2)
     parser.add_argument(
@@ -116,6 +118,11 @@ def main() -> None:
         parser.error("Sequence lengths greater than one require the windows protocol")
     if args.variant == "main" and args.fusion != "none":
         parser.error("Exact main has no temporal fusion")
+    if args.head_lr is not None or args.temporal_lr is not None:
+        if args.variant != "branch":
+            parser.error("Differential learning rates are a development-branch experiment")
+        if any(rate is not None and rate <= 0 for rate in [args.head_lr, args.temporal_lr]):
+            parser.error("Learning rates must be positive")
     if args.warmup_epochs is not None and args.warmup_epochs < 0:
         parser.error("Warmup epochs must be nonnegative")
     if args.target_training_frames is not None and args.target_training_frames < 1:
@@ -140,6 +147,10 @@ def main() -> None:
         overrides += [f"model.warmup_epochs={args.warmup_epochs}"]
     if args.variant == "branch":
         overrides += [f"model.temporal.fusion_type={args.fusion}"]
+        if args.head_lr is not None:
+            overrides += [f"+model.head_lr={args.head_lr}"]
+        if args.temporal_lr is not None:
+            overrides += [f"+model.temporal_lr={args.temporal_lr}"]
     if args.image_normalization != "imagenet_rgb":
         assert args.variant == "branch", "Preserve exact main preprocessing"
         overrides += [f"+data.preprocessor.cfg.image_normalization={args.image_normalization}"]
@@ -223,6 +234,8 @@ def main() -> None:
             "image_normalization",
             "epochs",
             "warmup_epochs",
+            "head_lr",
+            "temporal_lr",
             "target_training_frames",
             "data_dir",
             "raw_root",

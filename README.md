@@ -141,6 +141,13 @@ Transformer windows must fit `model.temporal.max_seq_len` (16 by default).
 GPU memory grows with batch size × window length; on an 8 GB GPU, start with
 `data.batch_size=1 trainer.precision=bf16-mixed trainer.accelerator=gpu`.
 
+To test faster learning in newly initialized heads while retaining a conservative
+pretrained-backbone rate, use `+model.head_lr=1e-3` and optionally
+`+model.temporal_lr=1e-3`. The default keeps the original uniform learning rate;
+when only `head_lr` is set, learned temporal fusion uses that same rate. These
+are controlled training experiments, not validated accuracy defaults. The
+comparison runner exposes them as `--head-lr` and `--temporal-lr` for branch runs.
+
 The default `ErrorGenerator` samples a relative perturbation in camera
 coordinates. To simulate independent sensor-local mounting drift, replace it:
 

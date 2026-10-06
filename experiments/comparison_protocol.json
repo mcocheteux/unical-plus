@@ -101,5 +101,30 @@
     "scope": "C2L-vs-usual comparisons on common 09/10 establish internal dataset parity and absolute accuracy quality, but are not exact paper split-alpha reproductions. The C2L training corpus contains sequence 08 (raw test-alpha drive 28); exclude that sequence from a separate paper-compatible C2L training arm before using drive 28 as an unseen test.",
     "success_target": "Demonstrate useful near-paper-level calibration as well as noninferiority to the reproduced usual-KITTI baseline. Identity-level parity is insufficient.",
     "reimplementation_differences": "Current UniCal++ is unofficial and uses RGB, a 6D rotation representation and modified heads; original paper describes roll/pitch/yaw regression and its strongest ablation uses grayscale plus LiDAR intensity."
+  },
+  "learning_diagnostics": {
+    "purpose": "Distinguish label/gradient pipeline failures from weak optimization; use training-only samples, never infer benchmark accuracy from micro-overfit.",
+    "completed_micro_overfit": {
+      "samples": 8,
+      "image_size": 128,
+      "loss_points": 2048,
+      "optimizer_updates": 200,
+      "backbone_lr": 3e-05,
+      "legacy_uniform_lr": {
+        "head_lr": 3e-05,
+        "normalization": "imagenet_rgb",
+        "final_translation_mae_cm": 1.1121,
+        "final_geodesic_rotation_deg": 0.8749
+      },
+      "candidate": {
+        "head_lr": 0.001,
+        "normalization": "mobilevit_bgr",
+        "final_translation_mae_cm": 0.9202,
+        "final_geodesic_rotation_deg": 0.2356
+      },
+      "interpretation": "Pipeline can fit real training targets; normalization and head LR both changed, so this diagnostic does not identify their separate causal effects or establish held-out performance."
+    },
+    "queued_control": "Full C2L BGR with head LR 3e-5 versus 1e-3, same backbone LR 3e-5, same initialization seed, inputs, targets, precision, loss, and frame budget.",
+    "temporal_phase": "Test paired T=1/T=3 mean and capacity-matched Transformer using BGR input and head/temporal LR 1e-3, backbone LR 3e-5. All temporal arms share those settings; record these implementation/training changes separately from temporal gains."
   }
 }

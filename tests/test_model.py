@@ -1,6 +1,9 @@
 """Smoke tests for the backbone / head / module wiring (no pretrained download)."""
 
+from types import SimpleNamespace
+
 import numpy as np
+import pytest
 import torch
 
 from unical.data.dataset import Batch
@@ -107,3 +110,28 @@ def test_training_retains_loss_and_gradients_without_cpu_metric_path(monkeypatch
     loss.backward()
     assert torch.isfinite(head.trans_head[-1].weight.grad).all()
     assert head.trans_head[-1].weight.grad.abs().sum() > 0
+
+
+@pytest.mark.parametrize("head_lr,temporal_lr", [(None, None), (1e-3, None), (1e-3, 5e-4)])
+def test_optimizer_keeps_all_parameters_and_preserves_encoder_rate(head_lr, temporal_lr):
+    from unical.models.temporal import TemporalFusion
+
+    model = UniCal(
+        torch.nn.Linear(4, 8),
+        torch.nn.Linear(8, 9),
+        CombinedLoss(RegressionLoss()),
+        temporal=TemporalFusion(feature_dim=8, fusion_type="gru", gru_hidden=8),
+        lr=3e-5,
+        head_lr=head_lr,
+        temporal_lr=temporal_lr,
+    )
+    model._trainer = SimpleNamespace(max_epochs=10)
+    optimizer = model.configure_optimizers()["optimizer"]
+    rates = {id(p): group["lr"] for group in optimizer.param_groups for p in group["params"]}
+    assert set(rates) == {id(p) for p in model.parameters()}
+    assert len(rates) == sum(len(group["params"]) for group in optimizer.param_groups)
+    assert all(rates[id(p)] == 3e-5 for p in model.backbone.parameters())
+    assert all(rates[id(p)] == (head_lr or 3e-5) for p in model.head.parameters())
+    assert all(
+        rates[id(p)] == (temporal_lr or head_lr or 3e-5) for p in model.temporal.parameters()
+    )

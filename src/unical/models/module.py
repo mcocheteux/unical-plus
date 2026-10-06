@@ -47,8 +47,12 @@ class UniCal(L.LightningModule):
         lr: float = 3e-5,
         weight_decay: float = 1e-4,
         warmup_epochs: int = 0,
+        head_lr: float | None = None,
+        temporal_lr: float | None = None,
     ) -> None:
         super().__init__()
+        if any(rate is not None and rate <= 0 for rate in [head_lr, temporal_lr]):
+            raise ValueError("Head and temporal learning rates must be positive")
         self.save_hyperparameters(ignore=["backbone", "head", "loss", "temporal"])
 
         self.backbone = backbone
@@ -172,8 +176,24 @@ class UniCal(L.LightningModule):
     # ------------------------------------------------------------------
 
     def configure_optimizers(self) -> dict[str, Any]:
+        parameters = self.parameters()
+        if self.hparams.head_lr is not None or self.hparams.temporal_lr is not None:
+            # Newly initialized heads can learn faster while preserving a
+            # conservative rate for the pretrained image/depth encoder.
+            head_rate = self.hparams.head_lr or self.hparams.lr
+            modules = [
+                (self.backbone, self.hparams.lr),
+                (self.head, head_rate),
+                (self.temporal, self.hparams.temporal_lr or head_rate),
+                (self.loss_fn, self.hparams.lr),
+            ]
+            parameters = [
+                {"params": values, "lr": rate}
+                for module, rate in modules
+                if (values := list(module.parameters()))
+            ]
         opt = torch.optim.AdamW(
-            self.parameters(),
+            parameters,
             lr=self.hparams.lr,
             weight_decay=self.hparams.weight_decay,
         )
