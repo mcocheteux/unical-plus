@@ -1,8 +1,10 @@
 """Recovery must advance even when validation loss gets worse."""
 
 import importlib.util
+import signal
 from pathlib import Path
 
+import pytest
 import pytorch_lightning as L
 import torch
 from torch.utils.data import DataLoader, TensorDataset
@@ -65,3 +67,34 @@ def test_recovery_advances_without_validation_improvement(tmp_path):
     latest = torch.load(new_recovery.last_model_path, weights_only=False, map_location="cpu")
     assert latest["epoch"] == 3
     assert latest["global_step"] == 8
+
+
+def test_keyboard_interrupt_preserves_completed_optimizer_updates(tmp_path):
+    class InterruptedModel(WorseningModel):
+        def training_step(self, batch, batch_idx):
+            if batch_idx == 1:
+                raise KeyboardInterrupt
+            return super().training_step(batch, batch_idx)
+
+    best, recovery = module.comparison_checkpoints(tmp_path)
+    trainer = L.Trainer(
+        accelerator="cpu",
+        max_epochs=2,
+        callbacks=[best, recovery],
+        logger=False,
+        enable_progress_bar=False,
+        enable_model_summary=False,
+        num_sanity_val_steps=0,
+    )
+    loader = DataLoader(TensorDataset(torch.ones(2, 1)), batch_size=1)
+    handler = signal.getsignal(signal.SIGINT)
+    try:
+        with pytest.raises(SystemExit):
+            trainer.fit(InterruptedModel(), loader, loader)
+    finally:
+        # Lightning ignores further SIGINTs during its graceful shutdown.
+        signal.signal(signal.SIGINT, handler)
+    saved = torch.load(recovery.last_model_path, weights_only=False, map_location="cpu")
+    assert saved["global_step"] == 1
+    assert saved["state_dict"]["weight"].item() == pytest.approx(0.98)
+    assert not best.best_model_path
