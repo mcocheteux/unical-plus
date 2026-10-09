@@ -141,6 +141,28 @@ Transformer windows must fit `model.temporal.max_seq_len` (16 by default).
 GPU memory grows with batch size × window length; on an 8 GB GPU, start with
 `data.batch_size=1 trainer.precision=bf16-mixed trainer.accelerator=gpu`.
 
+For streaming inference, cache the encoder features of earlier observations:
+
+```python
+from unical.models.streaming import StreamingCalibrator
+
+stream = StreamingCalibrator(model.eval(), sequence_length=3)
+prediction = stream.step(
+    single_frame_batch,  # Batch images/maps have shape (B, 1, C, H, W).
+    context_id=(drive_id, camera_id, projection_version),
+    frame_index=raw_frame_index,
+)
+# prediction is None until three consecutive observations are available.
+```
+
+Mean, GRU, and Transformer fusion reuse the same fixed model weights. A sliding
+three-frame window encodes one new frame per prediction after warmup. Use one
+cache per stream or consistently ordered batch of streams, and change
+`context_id` when stream identity, intrinsics, or projection calibration changes.
+Frame gaps, repeated frames, and observed model/precision changes clear history.
+Call `stream.reset()` after external state changes without tensor version updates,
+including weight mutations inside `torch.inference_mode()`.
+
 To test faster learning in newly initialized heads while retaining a conservative
 pretrained-backbone rate, use `+model.head_lr=1e-3` and optionally
 `+model.temporal_lr=1e-3`. The default keeps the original uniform learning rate;
