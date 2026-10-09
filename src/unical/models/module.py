@@ -16,6 +16,7 @@ from unical.data.dataset import Batch
 from unical.losses.combined import CombinedLoss
 from unical.models.backbone import MobileViTBackbone
 from unical.models.head import SplitRegressionHead
+from unical.models.temporal import TemporalFusion
 from unical.utils.metrics import CalibMetrics
 from unical.utils.transform import Transform, rotation_6d_to_matrix
 
@@ -28,6 +29,11 @@ class UniCal(L.LightningModule):
         backbone:      MobileViTBackbone instance.
         head:          SplitRegressionHead instance.
         loss:          CombinedLoss instance.
+        temporal:      TemporalFusion instance, aggregating a window of T
+                       per-frame backbone features into one vector before the
+                       head. ``fusion_type="none"`` is a parameter-free mean
+                       that is the identity at T=1, so single-frame runs are
+                       unaffected.
         lr:            Adam learning rate.
         weight_decay:  Adam weight decay.
     """
@@ -37,16 +43,22 @@ class UniCal(L.LightningModule):
         backbone: MobileViTBackbone,
         head: SplitRegressionHead,
         loss: CombinedLoss,
+        temporal: TemporalFusion | None = None,
         lr: float = 3e-5,
         weight_decay: float = 1e-4,
         warmup_epochs: int = 0,
+        head_lr: float | None = None,
+        temporal_lr: float | None = None,
     ) -> None:
         super().__init__()
-        self.save_hyperparameters(ignore=["backbone", "head", "loss"])
+        if any(rate is not None and rate <= 0 for rate in [head_lr, temporal_lr]):
+            raise ValueError("Head and temporal learning rates must be positive")
+        self.save_hyperparameters(ignore=["backbone", "head", "loss", "temporal"])
 
         self.backbone = backbone
         self.head = head
         self.loss_fn = loss
+        self.temporal = temporal if temporal is not None else TemporalFusion(fusion_type="none")
 
         self._train_metrics = CalibMetrics()
         self._val_metrics = CalibMetrics()
@@ -58,8 +70,17 @@ class UniCal(L.LightningModule):
 
     def forward(self, batch: Batch) -> tuple[torch.Tensor, torch.Tensor]:
         """Return (trans_pred (B,3), rot6d_pred (B,6))."""
-        features = self.backbone(batch)
-        return self.head(features)
+        B, T = batch.img.shape[0], batch.img.shape[1]
+        flat_batch = Batch(
+            img=batch.img.reshape(B * T, *batch.img.shape[2:]),
+            lidar_map=batch.lidar_map.reshape(B * T, *batch.lidar_map.shape[2:]),
+            target_reg=batch.target_reg,
+            pcl=batch.pcl,
+            metadata=batch.metadata,
+        )
+        features = self.backbone(flat_batch).reshape(B, T, -1)  # (B, T, D)
+        fused = self.temporal(features)  # (B, D)
+        return self.head(fused)
 
     # ------------------------------------------------------------------
     # Shared step
@@ -75,7 +96,8 @@ class UniCal(L.LightningModule):
         # .float() before .numpy(): under bf16 AMP the predictions are bfloat16,
         # which numpy cannot represent.
         pred_t = pred[0].detach().float().cpu().numpy()
-        pred_R = rotation_6d_to_matrix(pred[1]).detach().float().cpu().numpy()
+        with torch.autocast(device_type=pred[1].device.type, enabled=False):
+            pred_R = rotation_6d_to_matrix(pred[1].float()).detach().cpu().numpy()
         tgt_t = batch.target_reg[0].detach().float().cpu().numpy()
         tgt_R = batch.target_reg[1].detach().float().cpu().numpy()
         pred_Ts = [Transform.from_rotation_translation(pred_R[i], pred_t[i]) for i in range(B)]
@@ -87,7 +109,10 @@ class UniCal(L.LightningModule):
     # ------------------------------------------------------------------
 
     def training_step(self, batch: Batch, batch_idx: int) -> torch.Tensor:
-        losses, pred_Ts, target_Ts = self._step(batch)
+        # Training needs differentiable losses only. Building CPU-side metric
+        # transforms here synchronizes CUDA and copies predictions/targets that
+        # are discarded; retain that work in validation and test instead.
+        losses = self.loss_fn(self(batch), batch)
         B = batch.img.shape[0]
         self.log_dict(
             {f"train/{k}": v for k, v in losses.items()},
@@ -151,8 +176,24 @@ class UniCal(L.LightningModule):
     # ------------------------------------------------------------------
 
     def configure_optimizers(self) -> dict[str, Any]:
+        parameters = self.parameters()
+        if self.hparams.head_lr is not None or self.hparams.temporal_lr is not None:
+            # Newly initialized heads can learn faster while preserving a
+            # conservative rate for the pretrained image/depth encoder.
+            head_rate = self.hparams.head_lr or self.hparams.lr
+            modules = [
+                (self.backbone, self.hparams.lr),
+                (self.head, head_rate),
+                (self.temporal, self.hparams.temporal_lr or head_rate),
+                (self.loss_fn, self.hparams.lr),
+            ]
+            parameters = [
+                {"params": values, "lr": rate}
+                for module, rate in modules
+                if (values := list(module.parameters()))
+            ]
         opt = torch.optim.AdamW(
-            self.parameters(),
+            parameters,
             lr=self.hparams.lr,
             weight_decay=self.hparams.weight_decay,
         )

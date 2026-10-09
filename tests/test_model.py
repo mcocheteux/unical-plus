@@ -1,6 +1,9 @@
 """Smoke tests for the backbone / head / module wiring (no pretrained download)."""
 
+from types import SimpleNamespace
+
 import numpy as np
+import pytest
 import torch
 
 from unical.data.dataset import Batch
@@ -44,6 +47,27 @@ def test_stem_inflation_channel_count():
     assert bb.model.conv_stem.convolution.in_channels == 4
 
 
+@pytest.mark.parametrize("img_channels,lidar_channels", [(3, 1), (3, 2), (1, 1), (1, 2)])
+def test_pretrained_stem_preserves_image_response_and_initializes_lidar(
+    img_channels, lidar_channels
+):
+    # Exercise the actual adaptation without downloading pretrained weights.
+    stem = torch.nn.Conv2d(3, 4, 3, padding=1, bias=True)
+    holder = SimpleNamespace(model=SimpleNamespace(conv_stem=SimpleNamespace(convolution=stem)))
+    MobileViTBackbone._inflate_stem(holder, img_channels + lidar_channels, img_channels)
+    adapted = holder.model.conv_stem.convolution
+    image = torch.randn(2, img_channels, 12, 12)
+    pretrained_image = image.expand(-1, 3, -1, -1) if img_channels == 1 else image
+    combined = torch.cat([image, torch.zeros(2, lidar_channels, 12, 12)], dim=1)
+    torch.testing.assert_close(adapted(combined), stem(pretrained_image))
+    torch.testing.assert_close(
+        adapted.weight[:, img_channels:],
+        stem.weight.mean(dim=1, keepdim=True).expand(-1, lidar_channels, -1, -1),
+    )
+    # The three-channel grayscale/depth/intensity input must also be adapted.
+    assert adapted is not stem
+
+
 def test_step_runs_under_bf16_autocast():
     """End-to-end _step under bf16 AMP (guards numpy/geometry bf16 handling)."""
     bb = MobileViTBackbone(image_size=64, pretrained=None)
@@ -55,20 +79,80 @@ def test_step_runs_under_bf16_autocast():
     B, N = 2, 40
     eye, zero = np.eye(3, dtype=np.float32), np.zeros(3, dtype=np.float32)
     meta = [
-        {
-            "T_gt": Transform.from_rotation_translation(eye, zero),
-            "T_init": Transform.from_rotation_translation(eye, np.array([0.01, 0, 0], np.float32)),
-        }
-        for _ in range(B)
+        [
+            {
+                "T_gt": Transform.from_rotation_translation(eye, zero),
+                "T_init": Transform.from_rotation_translation(
+                    eye, np.array([0.01, 0, 0], np.float32)
+                ),
+            }
+            for _ in range(B)
+        ]
     ]
     batch = Batch(
-        img=torch.randn(B, 3, 64, 64),
-        lidar_map=torch.randn(B, 1, 64, 64),
+        img=torch.randn(B, 1, 3, 64, 64),
+        lidar_map=torch.randn(B, 1, 1, 64, 64),
         target_reg=(torch.randn(B, 3) * 0.05, rotation_6d_to_matrix(torch.randn(B, 6))),
-        pcl=torch.rand(B, N, 4) + 1.0,
+        pcl=[torch.rand(B, N, 4) + 1.0],
         metadata=meta,
     )
     with torch.autocast(device_type="cpu", dtype=torch.bfloat16):
         losses, pred_Ts, target_Ts = model._step(batch)
     assert torch.isfinite(losses["loss"])
     assert len(pred_Ts) == B and len(target_Ts) == B
+
+
+def test_training_retains_loss_and_gradients_without_cpu_metric_path(monkeypatch):
+    backbone = MobileViTBackbone(image_size=64, pretrained=None)
+    head = SplitRegressionHead(
+        in_features=backbone.model.config.neck_hidden_sizes[-1],
+        common_hidden=[],
+        trans_hidden=[32],
+        rot_hidden=[32],
+        rot_dim=6,
+    )
+    model = UniCal(backbone, head, CombinedLoss(RegressionLoss())).eval()
+    single = _fake_batch(size=64)
+    batch = single._replace(
+        img=single.img.unsqueeze(1),
+        lidar_map=single.lidar_map.unsqueeze(1),
+        pcl=[single.pcl],
+        metadata=[single.metadata],
+    )
+    expected, _, _ = model._step(batch)
+
+    def reject_cpu_metric_path(*args):
+        raise AssertionError("Training must not materialize NumPy metric transforms")
+
+    monkeypatch.setattr(model, "_step", reject_cpu_metric_path)
+    monkeypatch.setattr(model, "log_dict", lambda *args, **kwargs: None)
+    loss = model.training_step(batch, 0)
+    assert torch.allclose(loss, expected["loss"])
+    loss.backward()
+    assert torch.isfinite(head.trans_head[-1].weight.grad).all()
+    assert head.trans_head[-1].weight.grad.abs().sum() > 0
+
+
+@pytest.mark.parametrize("head_lr,temporal_lr", [(None, None), (1e-3, None), (1e-3, 5e-4)])
+def test_optimizer_keeps_all_parameters_and_preserves_encoder_rate(head_lr, temporal_lr):
+    from unical.models.temporal import TemporalFusion
+
+    model = UniCal(
+        torch.nn.Linear(4, 8),
+        torch.nn.Linear(8, 9),
+        CombinedLoss(RegressionLoss()),
+        temporal=TemporalFusion(feature_dim=8, fusion_type="gru", gru_hidden=8),
+        lr=3e-5,
+        head_lr=head_lr,
+        temporal_lr=temporal_lr,
+    )
+    model._trainer = SimpleNamespace(max_epochs=10)
+    optimizer = model.configure_optimizers()["optimizer"]
+    rates = {id(p): group["lr"] for group in optimizer.param_groups for p in group["params"]}
+    assert set(rates) == {id(p) for p in model.parameters()}
+    assert len(rates) == sum(len(group["params"]) for group in optimizer.param_groups)
+    assert all(rates[id(p)] == 3e-5 for p in model.backbone.parameters())
+    assert all(rates[id(p)] == (head_lr or 3e-5) for p in model.head.parameters())
+    assert all(
+        rates[id(p)] == (temporal_lr or head_lr or 3e-5) for p in model.temporal.parameters()
+    )

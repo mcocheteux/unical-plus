@@ -1,0 +1,189 @@
+{
+  "objective": "Assess normal UniCal on usual KITTI versus KITTI-C2L, then assess additional gains from sequence fusion.",
+  "compute": "Local RTX A4000 only; serial training jobs.",
+  "baseline_code": "main 7c16fd8; preserve model architecture and implementation for exact baseline runs.",
+  "common_primary_regime": "Usual relative errors +/-1 degree and +/-10 cm; C2L native stage 5. Native dual errors have a different relative distribution.",
+  "controls": [
+    "Exact main on usual KITTI pipeline, evaluated on both common relative and native C2L targets.",
+    "Exact main on published C2L frames, evaluated on the same common held-out frames and both protocols.",
+    "Matched-frame relative protocol control to isolate protocol from capture-day/scene selection.",
+    "Branch T=1 frame model to isolate implementation corrections from temporal fusion.",
+    "Branch T=1 frame model with pretrained-compatible MobileViT BGR/[0,1] inputs; isolate preprocessing from temporal gains. Keep legacy preprocessing for exact main and implementation controls.",
+    "Branch window T=1/T=3 mean with identical published targets and anchors.",
+    "Branch window T=1/T=3 Transformer with identical architecture and capacity.",
+    "Branch window T=1/T=3 GRU if needed to assess the alternative temporal architecture."
+  ],
+  "validation_rules": [
+    "Select checkpoints using validation only; evaluate held-out test after selection.",
+    "Use seeds 42, 43, 44 for decisive comparisons after pilots.",
+    "Start with pilots, broaden to multiple complete/diverse sequences and all held-out test sequences; do not conclude from the initial contiguous slice.",
+    "Verify train/validation/test raw frame identities do not overlap.",
+    "KITTI usual test drive 0028 overlaps C2L training sequence 08; never treat it as an unseen shared test for a model trained on sequence 08.",
+    "Use common held-out sequences 09 and 10 for cross-dataset comparisons.",
+    "Report geodesic degrees, per-axis translation MAE in cm, and identity-correction reference.",
+    "Pair predictions by sample ID; estimate uncertainty by non-overlapping temporal block/window and training seed.",
+    "Require stable validation learning curves and report both optimizer updates and backbone frames processed.",
+    "Report fixed-target versus online-resampled training as a separate protocol factor."
+  ],
+  "decision_rules": {
+    "dataset_noninferiority": "Predeclare 10% relative error margin on each metric versus usual training, using paired held-out predictions. Report both test protocols and any tradeoff.",
+    "temporal_improvement": "Paired 95% interval supports a reduction in at least one metric, with the other within the 10% noninferiority margin; verify across seeds and capacity-matched T=1 controls.",
+    "insufficient_evidence": "Do not claim parity or improvement from smoke runs, training loss alone, failure to reject a difference, or an underfit identity-level baseline."
+  },
+  "remaining": [
+    "Run broader normal-model comparisons to validation stability",
+    "Run matched window temporal controls",
+    "Replicate decisive results and assess uncertainty"
+  ],
+  "full_corpus_phase": {
+    "data_dir": "/home/mathieu/datasets/kitti_c2l_comparison_full",
+    "source_training_frames": 19608,
+    "training_frames_after_sequence_07_holdout": 18507,
+    "validation_frames": 1101,
+    "test_frames": 2792,
+    "initial_epochs": 10,
+    "warmup_epochs": 1,
+    "validation_period": 1,
+    "normalization": "ImageNet RGB for exact-main and legacy preprocessing controls; MobileViT BGR/[0,1] for optimized branch and matched temporal comparisons.",
+    "training_budget": "Full-corpus T=1 starts with roughly 185,000 backbone frames; report actual optimizer updates and frames for every arm. T=3 has three times the frame exposure at matched anchor epochs. Shortened epoch count reflects corpus size; validation stability remains required, and underfit runs must be extended or diagnosed.",
+    "usual_KITTI_budget": "Use all configured usual KITTI drives, selecting epoch count to approximately match full-C2L frame exposure; retain the main architecture, data pipeline and optimizer, with the same recorded warmup override."
+  },
+  "completed_asset_inventory": {
+    "KITTI_C2L": "Full frame and window corpus verified and frozen; source commit d4ba9d7; source frames 19608 train and 2792 test.",
+    "usual_KITTI": {
+      "configured_training_drives": 43,
+      "training_pairs": 15306,
+      "validation_pairs": 574,
+      "nominal_test_pairs": 5177,
+      "source_unpaired_images_skipped_by_original_loader": 4,
+      "loader_configuration_dry_run": "main unchanged, 13 epochs for target exposure 185070 frames, warmup 1 epoch"
+    },
+    "shared_heldout_sequences": [
+      "09",
+      "10"
+    ]
+  },
+  "optimized_phase": {
+    "requested_by_user": "Improve speed and efficiency while retaining the two goals: sequence UniCal and C2L versus usual KITTI validation.",
+    "image_size": 256,
+    "max_loss_points": 8192,
+    "precision": "bf16-mixed",
+    "batch_size": 8,
+    "num_workers": 4,
+    "pin_memory": true,
+    "point_subsampling": "Deterministic, evenly spaced loss-point subset after dense input-map construction. Targets and full input LiDAR map are unchanged.",
+    "fairness": "Apply identical optimized settings to both dataset training arms and all matched temporal controls. Restart optimized arms from initialization; never mix resolutions/precision/point caps within a reported arm. Preserve original 512px checkpoints as explicitly interrupted references.",
+    "initial_benchmark": "Main single frame approximately 82 anchors/s; original short benchmark approximately 16 anchors/s. Three-frame control approximately 37 anchors/s (110 backbone frames/s), finite losses, about 2.7GiB peak GPU allocation. Confirm sustained epoch throughput and accuracy.",
+    "publication_decision": "A reference-dataset claim requires successful useful calibration, not merely parity at identity-level error; validation stability and three-seed paired held-out tests still required."
+  },
+  "published_accuracy_reference": {
+    "source": "https://arxiv.org/html/2304.09715",
+    "paper": "UniCal: a Single-Branch Transformer-Based Model for Camera-to-LiDAR Calibration and Validation",
+    "table": "II",
+    "primary_reference": {
+      "split": "alpha: train KITTI raw 2011_09_26, val drives 5/70, test 2011_09_30 drive 28",
+      "translation_mae_cm": 0.89,
+      "reported_rotation_mae_degrees": 0.04
+    },
+    "secondary_split_dependent_references": [
+      {
+        "split": "beta",
+        "translation_mae_cm": 0.33,
+        "reported_rotation_mae_degrees": 0.03
+      },
+      {
+        "split": "delta",
+        "translation_mae_cm": 0.8,
+        "reported_rotation_mae_degrees": 0.04
+      }
+    ],
+    "metric_alignment": "Paper regresses roll/pitch/yaw and labels its metric rotation MAE; report XYZ Euler per-axis MAE separately from geodesic rotation error. Do not equate geodesic degrees with the paper table without establishing its definition.",
+    "scope": "C2L-vs-usual comparisons on common 09/10 establish internal dataset parity and absolute accuracy quality, but are not exact paper split-alpha reproductions. The C2L training corpus contains sequence 08 (raw test-alpha drive 28); exclude that sequence from a separate paper-compatible C2L training arm before using drive 28 as an unseen test.",
+    "success_target": "Demonstrate useful near-paper-level calibration as well as noninferiority to the reproduced usual-KITTI baseline. Identity-level parity is insufficient.",
+    "reimplementation_differences": "Current UniCal++ is unofficial and uses RGB, a 6D rotation representation and modified heads; original paper describes roll/pitch/yaw regression and its strongest ablation uses grayscale plus LiDAR intensity.",
+    "evaluation_guard": "Paper-alpha requires recorded training provenance. Reject C2L raw drive 2011_09_30/0028 regardless of sequence label, changed training metadata, missing historical metadata hashes, or usual KITTI train/validation exposure. CPU dry-run verifies 5177 test pairs at the training resolution.",
+    "separate_c2l_view": {
+      "excluded_training_sequences": [
+        "08"
+      ],
+      "training_frames_stage5": 14436,
+      "validation_frames_stage5": 1101,
+      "heldout_frames_stage5": 2792,
+      "heldout_metadata": "Byte-identical to the complete frozen C2L snapshot.",
+      "scope": "Makes paper-alpha test drive unseen; training captures still differ from paper alpha, so this is not an exact paper reproduction."
+    }
+  },
+  "learning_diagnostics": {
+    "purpose": "Distinguish label/gradient pipeline failures from weak optimization; use training-only samples, never infer benchmark accuracy from micro-overfit.",
+    "completed_micro_overfit": {
+      "samples": 8,
+      "image_size": 128,
+      "loss_points": 2048,
+      "optimizer_updates": 200,
+      "backbone_lr": 3e-05,
+      "legacy_uniform_lr": {
+        "head_lr": 3e-05,
+        "normalization": "imagenet_rgb",
+        "final_translation_mae_cm": 1.1121,
+        "final_geodesic_rotation_deg": 0.8749
+      },
+      "candidate": {
+        "head_lr": 0.001,
+        "normalization": "mobilevit_bgr",
+        "final_translation_mae_cm": 0.9202,
+        "final_geodesic_rotation_deg": 0.2356
+      },
+      "interpretation": "Pipeline can fit real training targets; normalization and head LR both changed, so this diagnostic does not identify their separate causal effects or establish held-out performance."
+    },
+    "queued_control": "Full C2L BGR with head LR 3e-5 versus 1e-3, same backbone LR 3e-5, same initialization seed, inputs, targets, precision, loss, and frame budget.",
+    "temporal_phase": "Primary matched T=1/T=3 mean controls use BGR with the original uniform LR 3e-5. Retain BGR/head-temporal LR 1e-3 mean and capacity-matched Transformer arms as separate tradeoff ablations. Both members of each temporal pair share settings; report implementation changes separately from temporal gains.",
+    "followup_accuracy_controls": [
+      "Same BGR/head LR 1e-3 branch implementation trained on usual KITTI; compare to full C2L branch arm on identical held-out native and relative protocols.",
+      "C2L without sequence 08, native and online usual perturbations as separate training arms; evaluate the unseen paper-alpha drive and common C2L holdouts.",
+      "Use 185070 target training frames with whole-epoch rounding recorded in manifests. Keep paper-alpha split differences explicit; these first-seed controls do not establish three-seed publication readiness."
+    ],
+    "completed_input_sensitivity": {
+      "scope": "CPU FP32 evaluation of the completed 10-epoch main C2L 256px checkpoint; eight evenly spaced training scenes, 13 camera-frame pose settings per scene. Training-only diagnostic, not benchmark accuracy.",
+      "translation_sweep_m": [
+        -0.1,
+        0.1
+      ],
+      "rotation_sweep_degrees": [
+        -1,
+        1
+      ],
+      "mean_fraction_changed_depth_pixels": 0.2492106780409813,
+      "mean_same_axis_prediction_gain_translation_xyz": [
+        0.0004143943078815937,
+        0.001599972601979971,
+        0.0006066728383302689
+      ],
+      "mean_same_axis_prediction_gain_euler_xyz": [
+        0.02421325124016309,
+        -2.7428862843118266e-05,
+        0.004065945590970464
+      ],
+      "ideal_same_axis_gain": 1,
+      "interpretation": "Depth maps visibly respond to the synthetic corrections while predictions are weakly sensitive. This diagnoses weak input-dependent calibration learning in this checkpoint, without isolating optimization, representation or dataset causality."
+    },
+    "head_lr_screening": {
+      "selection_basis": "Completed C2L validation curves show faster translation learning but rotation regressions exceeding the 10% margin at several epochs. Preserve uniform rate as primary balanced baseline before starting temporal controls. Test results are observational confirmation; checkpoints remain validation-selected.",
+      "heldout_seed42_observation": {
+        "native_translation_cm": [
+          4.206011376655887,
+          3.726527340208476
+        ],
+        "native_geodesic_rotation_deg": [
+          0.6075319662965543,
+          0.7572201088099346
+        ],
+        "order": [
+          "uniform_lr",
+          "head_lr_1e_minus3"
+        ],
+        "paired_rotation_noninferiority": false
+      },
+      "queue_change": "Preserve the active main relative-protocol run. Prioritize healthy branch usual-KITTI uniform-rate comparison, then uniform-rate T=1/T=3 mean. Retain previous legacy-preprocessing and higher-head-rate temporal ablations and paper-test followups."
+    }
+  }
+}

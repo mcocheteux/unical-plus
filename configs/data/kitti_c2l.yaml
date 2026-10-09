@@ -19,6 +19,12 @@ num_workers: 4
 pin_memory:  false   # MPS does not support pinned memory; harmless to leave false on CUDA
 
 val_sequence: "07"    # held out whole sequence from train.parquet, see KittiC2LDataModule docstring
+dataset_format: frames  # windows reads windows_train/test.parquet
+sequence_length: 1
+frame_stride: 1
+anchor_stride: 1
+minimum_context_length: null  # use the same value for matched T=1/T>1 anchors
+
 stages: null           # null = all 5 difficulty stages pooled; e.g. [1] to train on stage 1 only
 
 # Preprocessor: resizes image + LiDAR map, applies augmentation, normalises.
