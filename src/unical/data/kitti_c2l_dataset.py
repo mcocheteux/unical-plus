@@ -167,6 +167,7 @@ class KittiC2LDataModule(L.LightningDataModule):
         pin_memory: bool = True,
     ) -> None:
         super().__init__()
+        stages = list(stages) if stages is not None else None
         self.save_hyperparameters(ignore=["preprocessor"])
         self._preprocessor = preprocessor
         self._stage_set = set(stages) if stages is not None else None
@@ -205,6 +206,7 @@ class KittiC2LDataModule(L.LightningDataModule):
             shuffle=shuffle,
             collate_fn=KittiC2LDataset.collate,
             persistent_workers=self.hparams.num_workers > 0,
+            multiprocessing_context="spawn" if self.hparams.num_workers > 0 else None,
         )
 
     def train_dataloader(self) -> DataLoader:
