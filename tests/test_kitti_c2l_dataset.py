@@ -1,6 +1,6 @@
 """
 End-to-end smoke test for the KITTI-C2L adapter: builds a synthetic KITTI raw
-drive + a real KITTI-C2L parquet file (via the kitti_c2l package), then runs
+drive + schema-faithful KITTI-C2L parquet metadata, then runs
 one batch all the way through the real UniCal model on CPU (pretrained=None,
 so no network access is needed). This is the "verify on a tiny slice without
 GPU or real data" check for the benchmark pipeline.
@@ -11,13 +11,12 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
+import pyarrow as pa
+import pyarrow.parquet as pq
 import pytest
 import torch
-from kitti_c2l.generate import generate_sequence_rows
-from kitti_c2l.sequence_mapping import SequenceInfo
-from kitti_c2l.stages import STAGES
-from kitti_c2l.writer import write_split
 from PIL import Image
+from scipy.spatial.transform import Rotation
 
 from unical.data.kitti_c2l_dataset import KittiC2LDataModule, KittiC2LDataset
 from unical.data.preprocessor import DataPreprocessor, PreprocessorConfig
@@ -29,6 +28,41 @@ from unical.models.head import SplitRegressionHead
 from unical.models.module import UniCal
 
 IMAGE_SIZE = 64  # (width, height) of the synthetic fixture -- keep tiny & fast
+
+
+def _metadata_rows(sequence: str, date: str, drive: str) -> list[dict]:
+    """Independent known poses in the dataset's centimetre-based Parquet schema."""
+    gt_rotation = Rotation.from_euler("xyz", [0.02, -0.01, 0.03]).as_matrix()
+    gt_translation_m = np.array([-0.02, 0.04, 0.15])
+    rows = []
+    for stage in [1, 2]:
+        for frame in range(6):
+            delta_rotation = Rotation.from_euler(
+                "xyz", [0.2 * stage, -0.1 * (frame + 1), 0.3], degrees=True
+            ).as_matrix()
+            delta_translation_m = np.array([0.005 * (frame + 1), -0.007 * stage, 0.015])
+            rows.append(
+                {
+                    "sample_id": f"{sequence}_{frame:06d}_stage{stage}",
+                    "sequence": sequence,
+                    "raw_date": date,
+                    "raw_drive": drive,
+                    "frame_index": frame,
+                    "raw_frame_index": frame,
+                    "camera_id": 2,
+                    "stage": stage,
+                    "image_width": IMAGE_SIZE,
+                    "image_height": IMAGE_SIZE,
+                    "camera_intrinsics": [40.0, 0.0, 32.0, 0.0, 40.0, 32.0, 0.0, 0.0, 1.0],
+                    "gt_R_cam_from_velo": gt_rotation.reshape(-1).tolist(),
+                    "gt_t_cam_from_velo_cm": (gt_translation_m * 100).tolist(),
+                    "miscal_R_cam_from_velo": (delta_rotation @ gt_rotation).reshape(-1).tolist(),
+                    "miscal_t_cam_from_velo_cm": (
+                        (delta_rotation @ gt_translation_m + delta_translation_m) * 100
+                    ).tolist(),
+                }
+            )
+    return rows
 
 
 def _make_fake_kitti_date(date_dir: Path, drive: str, num_frames: int) -> None:
@@ -82,16 +116,16 @@ def kitti_c2l_fixture(tmp_path: Path) -> tuple[Path, Path]:
     _make_fake_kitti_date(kitti_raw_root / "2011_10_03", drive="0027", num_frames=6)
     _make_fake_kitti_date(kitti_raw_root / "2011_09_30", drive="0033", num_frames=6)
 
-    train_seq = SequenceInfo(
-        sequence="00", date="2011_10_03", drive="0027", start=0, end=5, frame_count=6, split="train"
-    )
-    test_seq = SequenceInfo(
-        sequence="09", date="2011_09_30", drive="0033", start=0, end=5, frame_count=6, split="test"
-    )
-
     data_dir = tmp_path / "data"
-    write_split(generate_sequence_rows(train_seq, kitti_raw_root, stages=STAGES[:2]), data_dir / "train.parquet")
-    write_split(generate_sequence_rows(test_seq, kitti_raw_root, stages=STAGES[:2]), data_dir / "test.parquet")
+    data_dir.mkdir()
+    pq.write_table(
+        pa.Table.from_pylist(_metadata_rows("00", "2011_10_03", "0027")),
+        data_dir / "train.parquet",
+    )
+    pq.write_table(
+        pa.Table.from_pylist(_metadata_rows("09", "2011_09_30", "0033")),
+        data_dir / "test.parquet",
+    )
 
     return kitti_raw_root, data_dir
 
@@ -106,11 +140,11 @@ def test_dataset_getitem_shapes(kitti_c2l_fixture: tuple[Path, Path]):
     assert len(dataset) == 6 * 2  # 6 frames x 2 stages
 
     sample = dataset[0]
-    assert sample["img"].shape == (3, IMAGE_SIZE, IMAGE_SIZE)
-    assert sample["lidar_map"].shape[1:] == (IMAGE_SIZE, IMAGE_SIZE)
+    assert sample["img"].shape == (1, 3, IMAGE_SIZE, IMAGE_SIZE)
+    assert sample["lidar_map"].shape[2:] == (IMAGE_SIZE, IMAGE_SIZE)
     assert sample["trans"].shape == (3,)
     assert sample["rot_mat"].shape == (3, 3)
-    assert sample["metadata"]["sequence"] == "00"
+    assert sample["metadata"][0]["sequence"] == "00"
 
 
 def test_decal_target_reconstructs_miscalibration(kitti_c2l_fixture: tuple[Path, Path]):
@@ -118,9 +152,16 @@ def test_decal_target_reconstructs_miscalibration(kitti_c2l_fixture: tuple[Path,
     kitti_raw_root, data_dir = kitti_c2l_fixture
     dataset = KittiC2LDataset(data_dir / "train.parquet", kitti_raw_root, _small_preprocessor())
     sample = dataset[3]
-    meta = sample["metadata"]
+    meta = sample["metadata"][0]
     reconstructed = meta["T_decal"] @ meta["T_gt"]
     np.testing.assert_allclose(reconstructed.matrix, meta["T_init"].matrix, atol=1e-4)
+    # Check against the independent known error, including centimetre conversion.
+    np.testing.assert_allclose(sample["trans"], [0.02, -0.007, 0.015], atol=1e-6)
+    np.testing.assert_allclose(
+        sample["rot_mat"],
+        Rotation.from_euler("xyz", [0.2, -0.4, 0.3], degrees=True).as_matrix(),
+        atol=1e-6,
+    )
 
 
 def test_datamodule_val_sequence_excluded_from_train(kitti_c2l_fixture: tuple[Path, Path]):
@@ -140,7 +181,8 @@ def test_datamodule_val_sequence_excluded_from_train(kitti_c2l_fixture: tuple[Pa
     assert len(dm.test_ds) == 6 * 2
 
 
-def test_full_pipeline_through_real_model_cpu(kitti_c2l_fixture: tuple[Path, Path]):
+@pytest.mark.parametrize("num_workers", [0, 2])
+def test_full_pipeline_through_real_model_cpu(kitti_c2l_fixture: tuple[Path, Path], num_workers):
     """One batch, real KittiC2LDataModule -> real UniCal model -> real loss, on CPU."""
     kitti_raw_root, data_dir = kitti_c2l_fixture
     dm = KittiC2LDataModule(
@@ -149,7 +191,7 @@ def test_full_pipeline_through_real_model_cpu(kitti_c2l_fixture: tuple[Path, Pat
         preprocessor=_small_preprocessor(),
         val_sequence="nonexistent",  # keep all 6 train frames
         batch_size=2,
-        num_workers=0,
+        num_workers=num_workers,
         pin_memory=False,
     )
     dm.setup()
@@ -157,7 +199,9 @@ def test_full_pipeline_through_real_model_cpu(kitti_c2l_fixture: tuple[Path, Pat
 
     backbone = MobileViTBackbone(image_size=IMAGE_SIZE, pretrained=None, spatial_head=True)
     feat_dim = backbone.model.config.neck_hidden_sizes[-1]
-    head = SplitRegressionHead(in_features=feat_dim, common_hidden=[], trans_hidden=[32], rot_hidden=[32], rot_dim=6)
+    head = SplitRegressionHead(
+        in_features=feat_dim, common_hidden=[], trans_hidden=[32], rot_hidden=[32], rot_dim=6
+    )
     loss = CombinedLoss(
         regression=RegressionLoss(trans_weight=1.0, rot_weight=1.0),
         spatial=SpatialLoss(centroid_weight=1.0, pcl_weight=1.0),
@@ -168,3 +212,94 @@ def test_full_pipeline_through_real_model_cpu(kitti_c2l_fixture: tuple[Path, Pat
         losses, pred_Ts, target_Ts = model._step(batch)
     assert torch.isfinite(losses["loss"])
     assert len(pred_Ts) == len(target_Ts) == batch.img.shape[0]
+
+
+def _window_parquet(data_dir: Path) -> Path:
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    rows = pq.read_table(data_dir / "train.parquet").to_pylist()
+    windows = []
+    for row, start, length in [(rows[0], 0, 4), (rows[1], 4, 2)]:
+        row = row | {
+            "window_id": f"00_{start:06d}_stage{row['stage']}",
+            "window_start_frame": start,
+            "raw_frame_start_index": start,
+            "window_length": length,
+        }
+        for key in ("sample_id", "frame_index", "raw_frame_index"):
+            row.pop(key, None)
+        windows.append(row)
+    path = data_dir / "windows_train.parquet"
+    pq.write_table(pa.Table.from_pylist(windows), path)
+    return path
+
+
+def test_published_windows_share_target_and_never_cross_boundaries(kitti_c2l_fixture):
+    from unical.data.kitti_c2l_dataset import KittiC2LWindowDataset
+
+    raw_root, data_dir = kitti_c2l_fixture
+    ds = KittiC2LWindowDataset(
+        _window_parquet(data_dir),
+        raw_root,
+        _small_preprocessor(),
+        sequence_length=3,
+    )
+    assert len(ds) == 2  # short second window cannot supply three frames
+    first, last = ds[0], ds[1]
+    assert first["img"].shape == (3, 3, IMAGE_SIZE, IMAGE_SIZE)
+    assert [m["raw_frame_index"] for m in first["metadata"]] == [0, 1, 2]
+    assert [m["raw_frame_index"] for m in last["metadata"]] == [1, 2, 3]
+    assert all(m["window_id"] == first["metadata"][0]["window_id"] for m in first["metadata"])
+    torch.testing.assert_close(first["trans"], last["trans"])
+    torch.testing.assert_close(first["rot_mat"], last["rot_mat"])
+    for meta in first["metadata"]:
+        np.testing.assert_allclose(
+            (meta["T_decal"] @ meta["T_gt"]).matrix, meta["T_init"].matrix, atol=1e-4
+        )
+
+
+def test_single_and_temporal_windows_use_identical_anchors_and_targets(kitti_c2l_fixture):
+    from unical.data.kitti_c2l_dataset import KittiC2LWindowDataset
+
+    raw_root, data_dir = kitti_c2l_fixture
+    path = _window_parquet(data_dir)
+    kwargs = dict(
+        parquet_path=path,
+        kitti_raw_root=raw_root,
+        preprocessor=_small_preprocessor(),
+        minimum_context_length=3,
+    )
+    single = KittiC2LWindowDataset(sequence_length=1, **kwargs)
+    temporal = KittiC2LWindowDataset(sequence_length=3, **kwargs)
+    assert len(single) == len(temporal) == 2
+    for one, multi in zip(single, temporal):
+        assert one["metadata"][0]["frame_index"] == multi["metadata"][-1]["frame_index"]
+        torch.testing.assert_close(one["img"][0], multi["img"][-1])
+        torch.testing.assert_close(one["lidar_map"][0], multi["lidar_map"][-1])
+        torch.testing.assert_close(one["trans"], multi["trans"])
+        torch.testing.assert_close(one["rot_mat"], multi["rot_mat"])
+
+
+def test_independent_frame_metadata_rejects_temporal_target_pooling():
+    with pytest.raises(ValueError, match="Independent frame targets"):
+        KittiC2LDataModule("unused", "unused", _small_preprocessor(), sequence_length=3)
+
+
+def test_hydra_stage_filters_remain_weights_only_checkpoint_compatible(tmp_path):
+    from omegaconf import OmegaConf
+
+    dm = KittiC2LDataModule(
+        "unused",
+        "unused",
+        _small_preprocessor(),
+        stages=OmegaConf.create([5]),
+        dataset_format="windows",
+        sequence_length=3,
+    )
+    assert type(dm.hparams.stages) is list
+    path = tmp_path / "hyperparameters.pt"
+    torch.save(dict(dm.hparams), path)
+    loaded = torch.load(path, weights_only=True)
+    assert loaded["stages"] == [5]
+    assert loaded["sequence_length"] == 3

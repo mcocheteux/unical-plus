@@ -10,22 +10,25 @@ from unical.losses.spatial import SpatialLoss
 from unical.utils.transform import Transform, rotation_6d_to_matrix
 
 
-def _fake_batch(B: int = 2, N: int = 64) -> Batch:
+def _fake_batch(B: int = 2, N: int = 64, T: int = 1) -> Batch:
     trans = torch.randn(B, 3) * 0.05
     R = rotation_6d_to_matrix(torch.randn(B, 6))
-    pcl = torch.randn(B, N, 4).abs() + 1.0  # forward points, intensity > 0
+    pcl = [torch.randn(B, N, 4).abs() + 1.0 for _ in range(T)]  # forward points, intensity > 0
     metadata = []
-    for _ in range(B):
-        T_gt = Transform.from_rotation_translation(
-            np.eye(3, dtype=np.float32), np.zeros(3, dtype=np.float32)
-        )
-        T_init = Transform.from_rotation_translation(
-            np.eye(3, dtype=np.float32), np.array([0.01, 0.0, 0.0], np.float32)
-        )
-        metadata.append({"T_gt": T_gt, "T_init": T_init})
+    for _ in range(T):
+        frame_meta = []
+        for _ in range(B):
+            T_gt = Transform.from_rotation_translation(
+                np.eye(3, dtype=np.float32), np.zeros(3, dtype=np.float32)
+            )
+            T_init = Transform.from_rotation_translation(
+                np.eye(3, dtype=np.float32), np.array([0.01, 0.0, 0.0], np.float32)
+            )
+            frame_meta.append({"T_gt": T_gt, "T_init": T_init})
+        metadata.append(frame_meta)
     return Batch(
-        img=torch.zeros(B, 3, 8, 8),
-        lidar_map=torch.zeros(B, 1, 8, 8),
+        img=torch.zeros(B, T, 3, 8, 8),
+        lidar_map=torch.zeros(B, T, 1, 8, 8),
         target_reg=(trans, R),
         pcl=pcl,
         metadata=metadata,
@@ -75,3 +78,66 @@ def test_combined_loss_has_total():
     assert "loss" in out
     out["loss"].backward()
     assert pred[0].grad is not None
+
+
+def test_spatial_loss_multiframe_equals_mean_of_singleframe():
+    """A T-frame window must equal the mean of T independent single-frame losses,
+    since the same shared prediction is checked against each frame's geometry."""
+    torch.manual_seed(0)
+    T = 3
+    multi_batch = _fake_batch(T=T)
+    pred = (torch.randn(2, 3), torch.randn(2, 6))
+
+    spatial = SpatialLoss()
+    multi_out = spatial(pred, multi_batch)
+
+    single_outs = []
+    for t in range(T):
+        single_batch = multi_batch._replace(
+            pcl=[multi_batch.pcl[t]], metadata=[multi_batch.metadata[t]]
+        )
+        single_outs.append(spatial(pred, single_batch))
+
+    for key in multi_out:
+        expected = sum(o[key] for o in single_outs) / T
+        assert torch.allclose(multi_out[key], expected, atol=1e-5)
+
+
+def test_spatial_loss_t1_has_finite_scalar_terms():
+    """Single-frame windows retain scalar spatial-loss terms."""
+    batch = _fake_batch(T=1)
+    pred = (torch.randn(2, 3), torch.randn(2, 6))
+    out = SpatialLoss()(pred, batch)
+    for v in out.values():
+        assert v.ndim == 0 and torch.isfinite(v)
+
+
+def test_spatial_loss_empty_scans_are_finite_and_differentiable():
+    batch = _fake_batch(T=2)._replace(pcl=[torch.zeros(2, 4, 4) for _ in range(2)])
+    pred = (torch.randn(2, 3, requires_grad=True), torch.randn(2, 6, requires_grad=True))
+    total = sum(SpatialLoss()(pred, batch).values())
+    assert total.item() == 0.0
+    total.backward()
+    assert all(p.grad is not None and torch.isfinite(p.grad).all() for p in pred)
+
+
+def test_spatial_loss_keeps_zero_reflectance_returns_and_all_points():
+    batch = _fake_batch()
+    scans = torch.zeros(2, 3, 4)
+    scans[0, 0, :3] = torch.tensor([1.0, 2.0, 3.0])
+    scans[1, :, :3] = torch.tensor([[1.0, 2.0, 3.0], [2.0, 4.0, 6.0], [3.0, 6.0, 9.0]])
+    batch = batch._replace(pcl=[scans])
+    pred_t = torch.zeros(2, 3)
+    pred_r6 = torch.tensor([[0.0, 1.0, 0.0, -1.0, 0.0, 0.0]]).repeat(2, 1)
+    out = SpatialLoss()((pred_t, pred_r6), batch)
+    # Check each scan independently: adding a shorter scan must not discard
+    # the longer scan's points, including returns with zero reflectance.
+    R_inv = rotation_6d_to_matrix(pred_r6)[0].T
+    expected_pcl, expected_centroid = [], []
+    for i, n in enumerate([1, 3]):
+        pts = scans[i, :n, :3]
+        rec = (R_inv @ (pts + torch.tensor([0.01, 0.0, 0.0])).T).T
+        expected_pcl.append((rec - pts).square().mean())
+        expected_centroid.append((rec.mean(0) - pts.mean(0)).square().mean())
+    assert torch.allclose(out["loss/spatial_pcl"], torch.stack(expected_pcl).mean())
+    assert torch.allclose(out["loss/spatial_centroid"], torch.stack(expected_centroid).mean())

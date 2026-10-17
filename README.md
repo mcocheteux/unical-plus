@@ -20,8 +20,8 @@ Accurate extrinsic calibration between cameras and LiDAR sensors is critical for
 autonomous vehicle perception. Factory calibrations degrade over time, and
 target-based re-calibration is expensive.
 
-**UniCal** learns to estimate the correction from a single snapshot — one RGB
-image + one LiDAR scan — with no calibration target needed. It processes both
+**UniCal** learns to estimate the correction from one RGB image and LiDAR scan,
+or a short window of consecutive pairs, with no calibration target needed. It processes both
 modalities through a shared MobileViT backbone (early fusion), predicts a 6-D
 continuous rotation and a translation vector, and is supervised by a combined
 regression + 3-D spatial loss.
@@ -37,7 +37,8 @@ regression + 3-D spatial loss.
 | 📐 **Spatial loss** | Differentiable point-cloud projection loss penalises 3-D misalignment directly, not just regression targets |
 | ⚡ **AMP-safe geometry** | Rigid-transform math is pinned to full precision inside mixed-precision training |
 | 🧩 **Hydra config** | Every hyperparameter is a CLI override — no code edits needed to run experiments |
-| 🔬 **46 tests** | Full pytest suite covering models, losses, transforms, augmentation, and geometry |
+| ⏱️ **Temporal fusion** | Mean, GRU, or Transformer aggregation predicts one shared correction per window |
+| 🔬 **Tests** | Geometry, windowing, benchmark integration, and local CUDA optimizer/checkpoint checks |
 
 ---
 
@@ -123,16 +124,130 @@ python train.py data_dir=/path/to/kitti_raw experiment=debug \
     trainer.max_epochs=2 trainer.accelerator=cpu data.num_workers=0
 ```
 
+### Temporal fusion and dual-sensor drift
+
+The defaults use a single frame and parameter-free mean fusion. Temporal
+windows stay within a drive, require every sampled frame to exist, and share
+one decalibration target. Enable learned fusion with:
+
+```bash
+uv run python train.py data_dir=/path/to/kitti_raw \
+    data.sequence_length=3 data.frame_stride=1 \
+    model.temporal.fusion_type=transformer
+# Or: model.temporal.fusion_type=gru
+```
+
+Transformer windows must fit `model.temporal.max_seq_len` (16 by default).
+GPU memory grows with batch size × window length; on an 8 GB GPU, start with
+`data.batch_size=1 trainer.precision=bf16-mixed trainer.accelerator=gpu`.
+
+For streaming inference, cache the encoder features of earlier observations:
+
+```python
+from unical.models.streaming import StreamingCalibrator
+
+stream = StreamingCalibrator(model.eval(), sequence_length=3)
+prediction = stream.step(
+    single_frame_batch,  # Batch images/maps have shape (B, 1, C, H, W).
+    context_id=(drive_id, camera_id, projection_version),
+    frame_index=raw_frame_index,
+)
+# prediction is None until three consecutive observations are available.
+```
+
+Mean, GRU, and Transformer fusion reuse the same fixed model weights. A sliding
+three-frame window encodes one new frame per prediction after warmup. Use one
+cache per stream or consistently ordered batch of streams, and change
+`context_id` when stream identity, intrinsics, or projection calibration changes.
+Frame gaps, repeated frames, and observed model/precision changes clear history.
+Call `stream.reset()` after external state changes without tensor version updates,
+including weight mutations inside `torch.inference_mode()`.
+
+To test faster learning in newly initialized heads while retaining a conservative
+pretrained-backbone rate, use `+model.head_lr=1e-3` and optionally
+`+model.temporal_lr=1e-3`. The default keeps the original uniform learning rate;
+when only `head_lr` is set, learned temporal fusion uses that same rate. These
+are controlled training experiments, not validated accuracy defaults. The
+comparison runner exposes them as `--head-lr` and `--temporal-lr` for branch runs.
+
+The default `ErrorGenerator` samples a relative perturbation in camera
+coordinates. To simulate independent sensor-local mounting drift, replace it:
+
+```bash
+uv run python train.py data_dir=/path/to/kitti_raw \
+    data.sequence_length=3 model.temporal.fusion_type=transformer \
+    '~data.decalibrator' \
+    '+data.decalibrator={_target_:unical.data.decalibrator.DualErrorGenerator,r_range_lidar:1.0,t_range_lidar:10.0,r_range_cam:1.0,t_range_cam:10.0}'
+```
+
+The dual generator right-perturbs each sensor-to-rig pose in its own local
+frame. It produces `T_init = D_cam⁻¹ @ T_gt @ D_lidar`, with relative regression
+target `T_init @ T_gt⁻¹`. Rotation ranges are degrees per axis and translation
+ranges are centimetres per axis. An identity camera perturbation still leaves
+a LiDAR-local perturbation; its relative target is conjugated by `T_gt`.
+
+`data=kitti_c2l` defaults to the published independent per-frame targets and
+T=1 batches. The published constant-error windows are also supported:
+
+```bash
+uv run python train.py data=kitti_c2l \
+    data.data_dir=/path/to/KITTI-C2L-Dataset/data \
+    data.kitti_raw_root=/path/to/kitti_raw \
+    data.dataset_format=windows data.sequence_length=3 \
+    model.temporal.fusion_type=transformer
+```
+
+Observations end at their anchor frame and never cross a published window
+boundary. For paired T=1/T=3 comparisons, set `data.minimum_context_length=3`
+in both runs so their anchors and published targets match. DataLoader workers
+use spawn to avoid inheriting background thread locks from pretrained loading.
+
+Image preprocessing defaults to the original ImageNet RGB normalization for
+compatibility with existing checkpoints. To test the BGR/[0, 1] input expected
+by pretrained [MobileViT](https://huggingface.co/docs/transformers/model_doc/mobilevit),
+add `+data.preprocessor.cfg.image_normalization=mobilevit_bgr` during training
+and evaluation. This retains the full-image resize and aligned LiDAR projection.
+The controlled experiment scripts accept `--image-normalization mobilevit_bgr`
+for branch runs and record the choice separately from temporal fusion.
+
+To test the grayscale image plus LiDAR depth/intensity inputs used in the
+paper's strongest KITTI ablation, keep preprocessing and stem channels aligned:
+
+```bash
+uv run python train.py data_dir=/path/to/kitti_raw \
+    data.preprocessor.cfg.grayscale=true data.preprocessor.cfg.add_intensity=true \
+    model.backbone.img_channels=1 model.backbone.lidar_channels=2
+```
+
+The pretrained stem sums its RGB filters for the grayscale channel and uses
+their mean for each LiDAR channel. This input configuration is supported;
+it has not yet reproduced the paper's accuracy.
+
+The comparison evaluator supports `--protocol paper-alpha` for single-frame
+checkpoints on KITTI raw 2011_09_30 drive 28. It requires recorded training
+provenance and rejects models exposed to that drive in training or validation.
+C2L sequence 08 contains this drive. To derive a separate frozen training view,
+run `experiments/freeze_dataset.py` with `--exclude-training-sequences 08`,
+using the complete frozen snapshot as `--source` and a new `--output` directory.
+The view preserves test metadata byte-for-byte and retains sequence 07 for
+validation. Retrain on that view before evaluating paper alpha; its training
+captures still differ from the paper's original split. The evaluator's
+`--dry-run` checks the selected dataset on CPU without loading model weights.
+
 ### Evaluate
 
 ```bash
 python evaluate.py data_dir=/path/to/kitti_raw +ckpt=logs/checkpoints/last.ckpt
+# Pass the same data/model overrides used during training, including temporal fusion.
 ```
 
 ### Run tests
 
 ```bash
 uv run pytest -v
+
+# CUDA optimizer steps, bf16/fp32 geometry, and checkpoint reloads on the local GPU
+CUDA_VISIBLE_DEVICES=0 uv run pytest -v tests/test_gpu_training.py
 ```
 
 ---
@@ -188,7 +303,7 @@ unical/
 │   ├── losses/                 # Regression, spatial, combined
 │   ├── data/                   # Dataset, DataModule, preprocessor
 │   └── utils/                  # Transform, geometry, augmentation, metrics
-├── tests/                      # 46 pytest tests (no data required)
+├── tests/                      # Synthetic tests; CUDA checks skip without a local GPU
 └── deploy/vast/                # Vast.ai GPU provisioning scripts
 ```
 

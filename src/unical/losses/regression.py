@@ -37,7 +37,8 @@ class RegressionLoss(nn.Module):
     ) -> dict[str, torch.Tensor]:
         pred_t, pred_r6 = pred
         target_t, target_R = batch.target_reg
-        pred_R = rotation_6d_to_matrix(pred_r6)
-        t_loss = self._mse(pred_t, target_t) * self.trans_weight
-        r_loss = self._mse(pred_R, target_R) * self.rot_weight
+        with torch.autocast(device_type=pred_t.device.type, enabled=False):
+            pred_R = rotation_6d_to_matrix(pred_r6.float())
+            t_loss = self._mse(pred_t.float(), target_t.float()) * self.trans_weight
+            r_loss = self._mse(pred_R, target_R.float()) * self.rot_weight
         return {"loss/reg_trans": t_loss, "loss/reg_rot": r_loss}

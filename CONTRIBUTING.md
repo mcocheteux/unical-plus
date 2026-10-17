@@ -22,15 +22,28 @@ uv run pytest -v          # verbose output
 uv run pytest tests/test_losses.py   # single file
 ```
 
-Tests use synthetic tensors only — no KITTI data required.
-
-To exercise the full data pipeline end-to-end, create a minimal synthetic
-KITTI fixture (see the instructions in `AGENTS.md`), then run:
+Tests use synthetic tensors and temporary KITTI/parquet fixtures; no real
+KITTI download is required. CUDA checks in `tests/test_gpu_training.py` run
+on the local GPU when available and skip otherwise:
 
 ```bash
-python train.py data_dir=<fixture_dir> experiment=debug \
-    trainer.max_epochs=1 trainer.accelerator=cpu data.num_workers=0
+CUDA_VISIBLE_DEVICES=0 uv run pytest -v tests/test_gpu_training.py
 ```
+
+For a real-data training/validation/checkpoint/test smoke run on a local GPU:
+
+```bash
+uv run python train.py data_dir=/path/to/kitti_raw experiment=debug \
+    data.sequence_length=3 data.batch_size=1 data.num_workers=2 \
+    model.temporal.fusion_type=transformer trainer.accelerator=gpu \
+    trainer.precision=bf16-mixed trainer.max_epochs=2 \
+    +trainer.limit_train_batches=4 +trainer.limit_val_batches=2 \
+    +trainer.limit_test_batches=2
+```
+
+Evaluate with the same data and model overrides as training. The debug split
+uses drives 1 and 5, and shares drive 5 between validation and test; its
+metrics establish pipeline functionality, not held-out benchmark accuracy.
 
 ## Linting
 

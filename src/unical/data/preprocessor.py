@@ -23,6 +23,7 @@ class PreprocessorConfig:
     width: int = 512
     height: int = 512
     grayscale: bool = False
+    image_normalization: str = "imagenet_rgb"
     add_intensity: bool = False
     min_depth: float = 2.0  # metres — filter near points
     max_depth: float = 80.0  # metres — filter far  points
@@ -39,6 +40,8 @@ class DataPreprocessor:
     """
 
     def __init__(self, cfg: PreprocessorConfig) -> None:
+        if cfg.image_normalization not in {"imagenet_rgb", "mobilevit_bgr"}:
+            raise ValueError(f"Unknown image normalization: {cfg.image_normalization}")
         self.cfg = cfg
         self.aug = Augmentor(cfg.augmentation)
 
@@ -103,11 +106,15 @@ class DataPreprocessor:
             img, lidar_map = self.aug.spatial(img, lidar_map)
 
         # 10. Normalise
-        img = (
-            imagenet_normalize(img)
-            if not self.cfg.grayscale
-            else min_max_normalize(img, axis=(0, 1))
-        ).astype(np.float32)
+        if self.cfg.grayscale:
+            img = min_max_normalize(img, axis=(0, 1))
+        elif self.cfg.image_normalization == "mobilevit_bgr":
+            # apple/mobilevit-small expects BGR scaled to [0, 1]. Keep our
+            # geometric resize (and aligned projection) rather than its classifier crop.
+            img = img[..., ::-1].astype(np.float32) / 255.0
+        else:
+            img = imagenet_normalize(img)
+        img = img.astype(np.float32)
         lidar_map = min_max_normalize(lidar_map, axis=(0, 1)).astype(np.float32)
 
         return img, lidar_map

@@ -50,9 +50,12 @@ class CalibMetrics:
         if not self.preds:
             return {}
         errors = []
+        geodesic_errors = []
         for p, t in zip(self.preds, self.targets):
             # relative rotation: p^{-1} ∘ t, then decompose
             rel = p.inverse() @ t
+            cosine = np.clip((np.trace(rel.rotation_matrix) - 1.0) / 2.0, -1.0, 1.0)
+            geodesic_errors.append(np.degrees(np.arccos(cosine)))
             ax, ay, az = matrix_to_euler_np(rel.matrix)
             errors.append(np.degrees(np.abs([ax, ay, az])))
         errors = np.array(errors)  # (N, 3)
@@ -63,8 +66,8 @@ class CalibMetrics:
             "rot/roll/STD": float(np.std(errors[:, 0])),
             "rot/pitch/STD": float(np.std(errors[:, 1])),
             "rot/yaw/STD": float(np.std(errors[:, 2])),
-            "rot/global/MAE": float(np.mean(errors)),
-            "rot/global/STD": float(np.std(errors)),
+            "rot/global/MAE": float(np.mean(geodesic_errors)),
+            "rot/global/STD": float(np.std(geodesic_errors)),
         }
 
     def all_metrics(self) -> dict[str, float]:

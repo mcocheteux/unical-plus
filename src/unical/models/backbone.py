@@ -11,6 +11,8 @@ The backbone can be initialised from ImageNet-pretrained MobileViT weights
 channels, the pretrained 3-channel stem convolution is "inflated" to the
 required channel count: the RGB filters are copied verbatim and each extra
 (LiDAR) channel is initialised from the mean of the pretrained RGB filters.
+For grayscale images, summing the RGB filters preserves the stem response
+to an image replicated across all three pretrained input channels.
 """
 
 from __future__ import annotations
@@ -64,6 +66,7 @@ class MobileViTBackbone(nn.Module):
         if pretrained:
             self.model = MobileViTModel.from_pretrained(pretrained)
             self._inflate_stem(in_channels, img_channels)
+            self.model.train()
         else:
             cfg = MobileViTConfig(
                 num_channels=in_channels,
@@ -92,9 +95,11 @@ class MobileViTBackbone(nn.Module):
         self.pool = nn.AdaptiveAvgPool2d((1, 1))
 
     def _inflate_stem(self, in_channels: int, img_channels: int) -> None:
-        """Expand the pretrained 3-channel stem conv to ``in_channels`` channels."""
+        """Map pretrained RGB filters to image and LiDAR input channels."""
         old = self.model.conv_stem.convolution
-        if old.in_channels == in_channels:
+        if img_channels not in {1, 3} or old.in_channels != 3:
+            raise ValueError("Pretrained stem adaptation supports RGB or grayscale images")
+        if old.in_channels == in_channels and img_channels == 3:
             return
         new = nn.Conv2d(
             in_channels,
@@ -105,7 +110,8 @@ class MobileViTBackbone(nn.Module):
             bias=old.bias is not None,
         )
         with torch.no_grad():
-            new.weight[:, :img_channels] = old.weight
+            image_weights = old.weight if img_channels == 3 else old.weight.sum(dim=1, keepdim=True)
+            new.weight[:, :img_channels] = image_weights
             if in_channels > img_channels:
                 # initialise each extra (LiDAR) channel from the mean RGB filter
                 mean_w = old.weight.mean(dim=1, keepdim=True)
