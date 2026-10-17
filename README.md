@@ -159,6 +159,34 @@ for dataset and augmentation settings.
 
 ---
 
+## Training and evaluating on KITTI-C2L
+
+Use the metadata directory containing `train.parquet` and `test.parquet`,
+plus your local KITTI Raw images and point clouds. The dataset builder package
+is not required to install or run UniCal.
+
+```bash
+python train.py data=kitti_c2l \
+  data.data_dir=/path/to/kitti-c2l \
+  data.kitti_raw_root=/path/to/kitti_raw
+
+python evaluate.py data=kitti_c2l \
+  data.data_dir=/path/to/kitti-c2l \
+  data.kitti_raw_root=/path/to/kitti_raw \
+  +ckpt=/path/to/model.ckpt
+```
+
+This adapter uses the fixed per-frame extrinsics from the Parquet metadata,
+converts translations from centimetres to metres, and holds out the entire
+sequence `07` for validation. Sequences `09` and `10` are reserved for testing.
+By default all difficulty stages are pooled; add `'data.stages=[5]'` to both
+commands to select stage 5. Report the stage selection and split alongside
+results: this protocol differs from the usual online KITTI perturbations and
+does not by itself reproduce published UniCal results. Worker processes use
+`spawn` to avoid inheriting background threads from pretrained-model loading.
+
+---
+
 ## Evaluation Protocol
 
 Tested on KITTI Raw `2011_09_30` drive 28 (LCCNet/RegNet split).
