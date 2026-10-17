@@ -30,11 +30,7 @@
     "temporal_improvement": "Paired 95% interval supports a reduction in at least one metric, with the other within the 10% noninferiority margin; verify across seeds and capacity-matched T=1 controls.",
     "insufficient_evidence": "Do not claim parity or improvement from smoke runs, training loss alone, failure to reject a difference, or an underfit identity-level baseline."
   },
-  "remaining": [
-    "Run broader normal-model comparisons to validation stability",
-    "Run matched window temporal controls",
-    "Replicate decisive results and assess uncertainty"
-  ],
+  "remaining": [],
   "full_corpus_phase": {
     "data_dir": "/home/mathieu/datasets/kitti_c2l_comparison_full",
     "source_training_frames": 19608,
@@ -135,7 +131,6 @@
       },
       "interpretation": "Pipeline can fit real training targets; normalization and head LR both changed, so this diagnostic does not identify their separate causal effects or establish held-out performance."
     },
-    "queued_control": "Full C2L BGR with head LR 3e-5 versus 1e-3, same backbone LR 3e-5, same initialization seed, inputs, targets, precision, loss, and frame budget.",
     "temporal_phase": "Primary matched T=1/T=3 mean controls use BGR with the original uniform LR 3e-5. Retain BGR/head-temporal LR 1e-3 mean and capacity-matched Transformer arms as separate tradeoff ablations. Both members of each temporal pair share settings; report implementation changes separately from temporal gains.",
     "followup_accuracy_controls": [
       "Same BGR/head LR 1e-3 branch implementation trained on usual KITTI; compare to full C2L branch arm on identical held-out native and relative protocols.",
@@ -183,7 +178,42 @@
         ],
         "paired_rotation_noninferiority": false
       },
-      "queue_change": "Preserve the active main relative-protocol run. Prioritize healthy branch usual-KITTI uniform-rate comparison, then uniform-rate T=1/T=3 mean. Retain previous legacy-preprocessing and higher-head-rate temporal ablations and paper-test followups."
-    }
+      "historical_execution_priority": "Preserve the active main relative-protocol run. Prioritize healthy branch usual-KITTI uniform-rate comparison, then uniform-rate T=1/T=3 mean. Retain previous legacy-preprocessing and higher-head-rate temporal ablations and paper-test followups."
+    },
+    "completed_head_lr_control": "Full C2L BGR with head LR 3e-5 versus 1e-3, same backbone LR 3e-5, same initialization seed, inputs, targets, precision, loss, and frame budget."
+  },
+  "long_main_replication": {
+    "rationale": "Seed42 longer C2L learns useful calibration on both common held-out protocols while longer usual KITTI remains near identity. Replicate before claiming a repeatable longer-recipe advantage.",
+    "seeds": [
+      42,
+      43,
+      44
+    ],
+    "baseline_commit": "7c16fd81e4889d6f16076b1ec5b58835d876807b",
+    "target_encoder_frames": 925350,
+    "c2l": {
+      "epochs": 50,
+      "encoder_frames": 925350,
+      "optimizer_updates": 115700
+    },
+    "usual": {
+      "epochs": 61,
+      "encoder_frames": 933666,
+      "optimizer_updates": 116754
+    },
+    "recipe": "Same optimized frame recipe as short main controls: 256px,8192 loss points,BF16,batch8,workers4,pinned memory,RGB normalization,uniform LR3e-5,warmup1,val every epoch. More updates and cosine horizon change together.",
+    "selection": "Best built-in validation loss only, then evaluate identical common native and relative held-out targets on sequences09/10.",
+    "analysis": "Paired 5000-draw training-seed and temporal-block bootstrap; predeclared10% margin on each metric. Compare datasets, short versus long within corpus, and identity; report each drive separately.",
+    "scope": "Paired training-seed and held-out-block assessment across42/43/44; optimized-training comparison, not published-recipe accuracy or reference-dataset publication readiness.",
+    "status": "complete"
+  },
+  "assessment_status": "complete",
+  "assessment_document": "experiments/ASSESSMENT.md",
+  "evidence_summary": "experiments/assessment_results.json",
+  "assessment_limits": {
+    "published_accuracy_success_target": "Not achieved. Do not advertise published UniCal accuracy or SOTA.",
+    "validation_stability_requirement": "Long main curves were non-monotonic, including substantial spikes. Report validation-selected held-out results; stable end-of-schedule convergence is not established.",
+    "frozen_dataset_reference_claim": "Unsupported broadly: improved-branch short-recipe relative deficits exceed10%, despite useful longer-main C2L learning.",
+    "sequence_training": "Dedicated mean training has not established a gain. Three-frame inference averaging improves paired held-out errors; no GRU or Transformer accuracy gain is claimed."
   }
 }
